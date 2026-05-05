@@ -209,41 +209,21 @@ static void Circle_Draw(void* self)
 Abstract classes follow the same vtable pattern as interfaces, but:
 - The struct is **not** prefixed with `I`.
 - The struct may contain concrete data fields alongside the vtable pointer.
-- Because the abstract class type is known to the vtable definition, vtable function pointers take a
-  pointer to the abstract class type directly — **not** `void*`. No cast is needed at the call site.
 
 ```c
 typedef struct ShapeVTableStruct
 {
-    void (*Draw)(Shape* self);
-    void (*Destroy)(Shape* self);
+    void (*Draw)(void* self);
+    void (*Destroy)(void* self);
 } ShapeVTable;
 
 typedef struct ShapeStruct
 {
-    const ShapeVTable* VTable;
+    ShapeVTable* VTable;
     Vector2 Position; // concrete shared data
 } Shape;
 ```
 
-
-### Concrete Implementations
-
-A concrete type implementing an interface or abstract class defines a `static const` vtable and an
-upcast function that fills in the interface/abstract struct:
-
-```c
-static const IDrawableVTable CIRCLE_DRAWABLE_VTABLE =
-{
-    .Draw    = Circle_DrawAsDrawable,
-    .Destroy = Circle_Destroy,
-};
-
-IDrawable Circle_AsDrawable(Circle* self)
-{
-    return (IDrawable){ .VTable = &CIRCLE_DRAWABLE_VTABLE, .Self = self };
-}
-```
 
 ### Constructors and Destructors
 
