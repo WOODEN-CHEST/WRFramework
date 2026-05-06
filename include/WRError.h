@@ -3,6 +3,13 @@
 #include <stddef.h>
 
 
+/**
+ * Error module provides exception like errors and their handling functions.
+ * Errors are typically returned from functions by their return value rather than writing to a pointer which
+ * points to an error object.
+ */
+
+
 // Types.
 typedef enum ErrorCodeEnum
 {

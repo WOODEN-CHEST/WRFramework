@@ -1,9 +1,10 @@
 # Project Agent Guidelines
 
+
 ## Tech Stack
 
 - **Language:** C23
-- **Renderer / Framework:** Raylib 6.0
+- **Renderer / Framework:** Raylib 6.0 and WRFramework (custom lib for this project)
 - **Compiler flags:** All warnings enabled and treated as errors, pedantic warnings on, conversion warnings on.
   Write code that compiles cleanly under these flags. Never silence a warning with a cast or pragma unless
   there is no other option, and leave a comment explaining why.
@@ -19,10 +20,9 @@ project/
   source/       # Implementation files (.c), one per module (roughly).
 ```
 
-Headers go under `include/`, source files go under `source/`. There is no nested directory structure below
-these two unless explicitly introduced later.
-
 ---
+
+Headers go under `include/`, source files go under `source/`.
 
 ## Build Rules
 
@@ -33,10 +33,56 @@ these two unless explicitly introduced later.
 
 ---
 
+
+# WRFramework
+
+The project is a custom library called WRFramework, it adds extra funcionality which raylib doesnt have, at least not fully.
+The library is split into modules, each one having a header file and each for a specific task.
+The modules are (in alphabetical order):
+- WRArrayList: A generic array list.
+- WRBinaryIO: Classes and streams for writing and reading binary data.
+- WRChar: Utilities for writing and reading UTF-8 and UTF-16 unicode characters.
+- WRCollection: Basically Java's ICollection or C#'s IEnumerable interfaces.
+- WRComparator: Generic object comparison operations like in Java.
+- WRCompile: Random compiling utils, like a macro which marks a parameter as unused.
+- WREnvironment: Environment properties of the host machine, like newline, directory sperator, endianess, etc.
+- WRError: Exception like errors and their handling functions.
+- WREvent: An event class which can be subscribed, unsubscribed and listened to. Use this for events.
+- WRFileStream: An IOStream for file system files (used in place of FILE*).
+- WRFileSystem: File system operations, like opening file streams, iterating files, getting file system entry properties, etc.
+- WRGHDF: A binary file format to store data in, like game saves and such. Used for saving binary data to the disk.
+- WRHash: Hashcode creation functions.
+- WRHashMap: A generic map data structure.
+- WRIO: IO streams like in C# and Java.
+- WRJSON: JSON reading, writing and handling.
+- WRList: An interface for lists.
+- WRMap: An interface for maps.
+- WRMath: Various math utilities for scalar values.
+- WRMemory: Memory management functions, buffer management functions.
+- WRMemoryStream: An IO stream which is backed by memory, not a socket or on the disk.
+- WRNumber: Number conversions from and to strings with advanced options.
+- WRObjectPool: A generic object pool where objects can be borrowed and returned, used to avoid constant allocations.
+- WRPath: File system path functionality and management.
+- WRRandom: A random number generator.
+- WRSocket: Sockets for networking operations.
+- WRStandardStream: IO streams for stdin, stdout and stderr.
+- WRString: String operations.
+- WRStringBuilder: A stringbuilder class.
+- WRThread: Threading operations and functionality.
+- WRUnicode: Unicode funcionality (including converting and testing codepoints).
+- WRUnicodeLoader: Class to load unicode data from a UnicodeData.txt database.
+
+Where the framework uses interfaces or abstract classes, it is generally recommended to pass around the non-concrete type
+rather than the concrete one. For storing the object in a variable or struct member, it's context dependent, as
+using the interface / abstract class type is generally better, but since this is C and allocations matter, sometimes it is better
+to use a concrete type directly. Ask about the correct usage before proceeding.
+
+
 ## Platform
 
-Linux and Windows. Platform-specific functionality is handled through a strict split between public
-headers and implementation files:
+Linux and Windows.
+If you do decide to implement platform specific code for something, then the
+functionality is handled through a strict split between public headers and implementation files:
 
 - **Public headers** (`include/`) are always platform-agnostic. They define the API only — no
   platform-specific types, macros, or includes.
@@ -44,8 +90,6 @@ headers and implementation files:
   `#elif defined(__linux__)` etc. as needed.
 - When implementations diverge significantly, a module may have multiple implementation files (one per
   platform) rather than one file full of ifdefs. Use whichever approach keeps the code cleaner.
-- Cross-platform utilities (file paths, OS interactions, etc.) will be provided by the project's own
-  framework modules. Use those — do not reimplement or reach for platform-specific equivalents directly.
 
 ---
 
@@ -85,8 +129,7 @@ prefix as a signal — C has no enforcement, so this is a convention the agent m
 ### `const` Qualification
 
 Use `const` on pointer/reference parameters wherever the pointee is not mutated, mirroring the convention
-used in the C standard library. This applies to function parameters and to pointers stored in structs where
-applicable:
+used in the C standard library. This applies to function parameters:
 
 ```c
 // self is mutated, name is not.
@@ -130,7 +173,7 @@ The inner tag name (`MyStructStruct`) is required so the type can be forward-dec
 
 Each module consists of:
 - One header (`include/ModuleName.h`) — public API and type definitions.
-- One source file (`source/ModuleName.c`) — implementation.
+- One or more source files (`source/ModuleName.c`) — implementation.
 
 A source file may contain more than one related "class" if they are tightly coupled. Do not put unrelated classes in
 the same file just to reduce file count.
@@ -272,9 +315,6 @@ void List_Append(List* self, int value);
   semantically equivalent to `malloc`/`free`.
 - **Minimize heap fragmentation.** Prefer allocating larger contiguous blocks over many small individual
   allocations. Design data structures with this in mind.
-- **Every type must have a `TypeName_Deconstruct`**, even if no memory is currently allocated. This
-  ensures the destructor hook exists for when memory use is added later.
-- Each object owns its own memory — anything allocated during construction is freed in `Deconstruct`.
 - Never free memory you did not allocate. If a pointer is borrowed (not owned), document it with a comment.
 - Any interface vtable must expose a `Destroy` slot so callers holding only an interface can release the
   underlying object without knowing its concrete type.
@@ -287,10 +327,12 @@ void List_Append(List* self, int value);
 An error status is returned via a struct. The struct has an error code (an enum) which is like the type of the error,
 and an OPTIONAL error message. The error code can be the success code to indicate no error, at which point the message
 should also be null. If the error code is not success, there may be a pointer to an optional error message.
-- If you do not see a suitable error code for an error, you can add it.
+- If you do not see a suitable error code for an error, it can be added by bringing the issue up before proceeding.
 - Remember that errors with messages need to be freed once no longer used since the message is heap-allocated. 
 - Do NOT swallow errors by ignoring them completely. If you feel an error is ignorable and not critical,
 at least remember to deconstruct it to free any used memory by it.
+- Functions that can return errors always have errors as their return value rather than writing to a pointer which
+points to an error object.
 ---
 
 ## Raylib and Header Hygiene
@@ -328,49 +370,40 @@ generally you should be trying to make sure the project uses UTF-8, whatever API
 in usage converted to UTF-8.
 
 
+---
+
 ## Static state
 Avoid static state as much as possible (not illegal, just should be avoided). The C lib already has enough of it. 
 All required data is passed to the functions where needed instead of held in global variables.
 
+---
 
 ## Constants
 - It is generally preferred to have fields as constants instead of macros, but sometimes that may cause more issues. If it does,
 a macro will be fine.
 - You should avoid magic numbers and magic constants where possible. Make them constants and use those.
 
+---
 
 ## Git
 - You are NOT allowed to run git functions which mutate files, read-only git functions are allowed.
 
+---
 
 ## Comments
 - Do not add useless comments everywhere, only comment the super non-obvious, weird or hacky stuff, which should be rare.
 
-# Types
+---
+
+## Documentation
+- If needed, add header level or function level documentation or comments (in headers) for things that may not be
+super obvious or where the details could be misinterpreted. Header level documentation about how the given module
+is supposed to be used is useful too.
+
+---
+
+## Types
 - Be wary of desktop platform dependant code. Use explicit int types and limits from stdint
 instead of platform-dependant int types from the language.
 Exception is if the API being used also doesn't use explicit int types (like how many OpenGL functions just use int instead of
 something like int32_t). Be careful about clib printf formatting too, since some of it is platform dependant too.
-
-
-## Quick Reference Checklist (for agents before submitting)
-
-- [ ] Compiles cleanly under strict flags (no warnings, no conversions, pedantic-safe)?
-- [ ] All new types are `typedef`-ed with an inner tag name?
-- [ ] Enum constants use `EnumName_ConstantName` format?
-- [ ] Public struct members PascalCase, read-only ones `_camelCase`?
-- [ ] Local variables PascalCase, function parameters camelCase?
-- [ ] No `const` on struct members (only on pointer parameters where applicable)?
-- [ ] Every new interface has a vtable struct, a wrapper struct, and static inline wrapper functions?
-- [ ] Interface vtable functions use `void*` for self; abstract class vtable functions use the abstract type?
-- [ ] No unnecessary casts from `void*`?
-- [ ] Every vtable includes a `Destroy` slot?
-- [ ] Every concrete vtable instance is `static const`?
-- [ ] Every type has a `Deconstruct`, even if currently empty?
-- [ ] Memory allocated in Construct is freed in Deconstruct?
-- [ ] Custom memory module used for allocations (or placeholder `// TODO` if not yet available)?
-- [ ] No Raylib types leaked into public headers unnecessarily?
-- [ ] Public headers are platform-agnostic; platform-specific code is in implementation files only?
-- [ ] New modules explicitly noted in response?
-- [ ] Incomplete sections marked with `// TODO:`?
-- [ ] Generic buffer, if written to, written to via its methods and not directly?

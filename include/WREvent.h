@@ -5,6 +5,14 @@
 #include "WRError.h"
 
 
+/**
+ * The module provides a way to subscribe to and raise events.
+ * The event class is designed such that it can be subscribed or unsubscribed from at any time,
+ * including in the middle of an event being raised.
+ * However, the event class is not thread-safe.
+ */
+
+
 #define WREVENT_HANDLE_INVALID ((WREventHandle)0)
 #define WREVENT_PRIORITY_DEFAULT ((WREventPriority)0)
 
