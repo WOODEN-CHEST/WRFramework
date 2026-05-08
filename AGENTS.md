@@ -291,7 +291,8 @@ void List_Append(List* self, int value);
 ## Memory Management
 
 - The project uses a **custom memory module** instead of `malloc`/`free` directly.
--  Use `Memory_Allocate`, `Memory_Reallocate`, `Memory_Free`,
+-  Use `Memory_Allocate`, `Memory_Reallocate`, `Memory_Free`, These functions abort if they fail, no need to check for
+  null returns in call sites.
   `Memory_Copy`, `Memory_Move`, `Memory_Set`, and `Memory_Zero` instead of calling the C standard library directly.
 - `GenericBuffer` capacity and count are measured in elements, not bytes. The byte/string helpers are only valid when
   `buffer->_elementSize == sizeof(unsigned char)`, and they still must obey the same validation and capacity rules as
