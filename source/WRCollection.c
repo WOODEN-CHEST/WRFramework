@@ -61,7 +61,7 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
             Result = CollectionEnumerator_NextByReference(Enumerator, &TargetPointer);
             if (Result.Code == ErrorCode_Success)
             {
-                Memory_Copy(TargetData, &TargetPointer, sizeof(TargetPointer));
+                Memory_Copy(&TargetPointer, TargetData, sizeof(TargetPointer));
             }
         }
         else

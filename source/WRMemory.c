@@ -423,6 +423,10 @@ bool GenericBuffer_ReserveMoreCapacity(GenericBuffer* buffer, size_t requiredSiz
     {
         return false;
     }
+    if (requiredSize > (SIZE_MAX - buffer->_count))
+    {
+        return false;
+    }
 
     return GenericBuffer_EnsureTotalCapacity(buffer, buffer->_count + requiredSize);
 }

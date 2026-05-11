@@ -629,8 +629,6 @@ static void InitializeInterfaces(HashMap* self)
         return;
     }
 
-    self->_map._keySize = self->_map._keySize;
-    self->_map._valueSize = self->_map._valueSize;
     self->_map._flags = MapFlags_None;
     self->_map._vtable = MapVTableTemplate;
     self->_map._vtable.Self = self;

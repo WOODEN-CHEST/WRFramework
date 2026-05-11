@@ -111,11 +111,14 @@ static Error WREvent_CreateBufferTooSmallError(const unsigned char* message)
 // Public functions.
 Error WREvent_Construct1(WREvent* self)
 {
+    Error Result = Error_CreateSuccess();
+
     if (self == NULL)
     {
         return WREvent_CreateIllegalArgumentError(u8"The event instance must not be null.");
     }
 
+    Memory_Zero(self, sizeof(*self));
     GenericBuffer_AllocateVariable(&self->_selfSubscribers,
         WREVENT_DEFAULT_INITIAL_CAPACITY,
         sizeof(WREventSubscriber));
@@ -123,7 +126,14 @@ Error WREvent_Construct1(WREvent* self)
         WREVENT_DEFAULT_INITIAL_CAPACITY,
         sizeof(WREventSubscriber));
 
-    return WREvent_Initialize(self, &self->_selfSubscribers, &self->_selfRaiseSubscriberSnapshot, true);
+    Result = WREvent_Initialize(self, &self->_selfSubscribers, &self->_selfRaiseSubscriberSnapshot, true);
+    if (Result.Code != ErrorCode_Success)
+    {
+        WREvent_Deconstruct(self);
+        return Result;
+    }
+
+    return Error_CreateSuccess();
 }
 
 Error WREvent_Construct2(WREvent* self, GenericBuffer* subscriberBuffer, GenericBuffer* subscriberSnapshotBuffer)

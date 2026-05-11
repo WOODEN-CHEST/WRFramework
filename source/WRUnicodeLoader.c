@@ -135,18 +135,31 @@ static bool IsCategoryText(const unsigned char* sourceText, unsigned char firstC
 
 static void EnsureUnicodeDataCapacity(UnicodeParser* parser, size_t capacity)
 {
+    size_t NewCapacity = 0;
+    size_t NewSize = 0;
+
     if (parser->DataCapacity >= capacity)
     {
         return;
     }
 
-    size_t NewCapacity = (parser->DataCapacity == 0) ? UNICODE_DATA_CAPACITY_DEFAULT : parser->DataCapacity;
+    NewCapacity = (parser->DataCapacity == 0) ? UNICODE_DATA_CAPACITY_DEFAULT : parser->DataCapacity;
     while (NewCapacity < capacity)
     {
+        if (NewCapacity > (SIZE_MAX / UNICODE_DATA_CAPACITY_GROWTH))
+        {
+            abort();
+        }
+
         NewCapacity *= UNICODE_DATA_CAPACITY_GROWTH;
     }
 
-    size_t NewSize = NewCapacity * sizeof(UnicodeCharacter);
+    if (NewCapacity > (SIZE_MAX / sizeof(UnicodeCharacter)))
+    {
+        abort();
+    }
+
+    NewSize = NewCapacity * sizeof(UnicodeCharacter);
     parser->Data = (parser->Data != NULL) ? Memory_Reallocate(parser->Data, NewSize) : Memory_Allocate(NewSize);
     parser->DataCapacity = NewCapacity;
 }

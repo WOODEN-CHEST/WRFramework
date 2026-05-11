@@ -470,6 +470,7 @@ static Error NormalizeStartIndex(const unsigned char* str,
 
     if (outIndex == NULL)
     {
+        Memory_Free(CharacterIndices._data);
         return CreateNullArgumentError(u8"outIndex");
     }
 
@@ -478,10 +479,12 @@ static Error NormalizeStartIndex(const unsigned char* str,
     {
         if ((uint64_t)options._startIndex > (uint64_t)byteLength)
         {
+            Memory_Free(CharacterIndices._data);
             return Error_CreateSuccess();
         }
 
         *outIndex = (size_t)options._startIndex;
+        Memory_Free(CharacterIndices._data);
         return Error_CreateSuccess();
     }
 
@@ -656,6 +659,7 @@ static Error FindPreviousOccurrence(const unsigned char* str,
 
     if (outIndex == NULL)
     {
+        Memory_Free(CharacterIndices._data);
         return CreateNullArgumentError(u8"outIndex");
     }
 
@@ -1092,10 +1096,6 @@ Error StringUTF8_Equals(const unsigned char* a,
     }
 
     *outValue = false;
-    if (Result.Code != ErrorCode_Success)
-    {
-        return Result;
-    }
     if (caseRule == StringCaseRule_CaseIgnore)
     {
         Result = ValidateUnicode(unicode);
@@ -1766,8 +1766,13 @@ Error StringUTF8_Format(const unsigned char* str,
     }
 
     Buffer = Memory_Allocate((size_t)CharacterCount + 1);
-    (void)vsnprintf(Buffer, (size_t)CharacterCount + 1, (const char*)str, ArgumentList);
+    CharacterCount = vsnprintf(Buffer, (size_t)CharacterCount + 1, (const char*)str, ArgumentList);
     va_end(ArgumentList);
+    if (CharacterCount < 0)
+    {
+        Memory_Free(Buffer);
+        return Error_Construct1(ErrorCode_InvalidOperation, u8"Cannot format the string.");
+    }
 
     Result = StringUTF8_CopyTo((const unsigned char*)Buffer, destination);
     Memory_Free(Buffer);
@@ -2191,6 +2196,7 @@ Error StringUTF8_Reverse(const unsigned char* str, GenericBuffer* destination)
     Result = PrepareByteBuffer(destination, u8"destination");
     if (Result.Code != ErrorCode_Success)
     {
+        Memory_Free(CharacterIndices._data);
         return Result;
     }
 

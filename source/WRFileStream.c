@@ -233,6 +233,7 @@ static Error FileStream_ReadByte(void* selfVoid, unsigned char* byte)
         return CreateClosedStreamError(u8"read from");
     }
 
+    errno = 0;
     Result = fgetc(GetHandle(self));
     if (Result == EOF)
     {
@@ -241,7 +242,7 @@ static Error FileStream_ReadByte(void* selfVoid, unsigned char* byte)
             return Error_Construct1(ErrorCode_IO, u8"Cannot read past the end of the file stream.");
         }
 
-        return CreateIOError(u8"read a byte from", ferror(GetHandle(self)));
+        return CreateIOError(u8"read a byte from", errno);
     }
 
     *byte = (unsigned char)Result;
