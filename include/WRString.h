@@ -74,6 +74,10 @@ Error StringUTF8_Equals(const unsigned char* a,
     UnicodeData* unicode,
     bool* outValue);
 
+Error StringUTF8_EqualsExact(const unsigned char* a,
+    const unsigned char* b,
+    bool* outValue);
+
 Error StringUTF8_CopyTo(const unsigned char* source, GenericBuffer* destination);
 
 Error StringUTF8_CopyToBySize(const unsigned char* source, size_t size, GenericBuffer* destination);

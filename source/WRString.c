@@ -1131,6 +1131,35 @@ Error StringUTF8_Equals(const unsigned char* a,
     return Error_CreateSuccess();
 }
 
+Error StringUTF8_EqualsExact(const unsigned char* a,
+    const unsigned char* b,
+    bool* outValue)
+{
+    size_t LengthA = 0;
+    size_t LengthB = 0;
+    Error Result = ValidateStringPairArguments(a, b);
+
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+    if (outValue == NULL)
+    {
+        return CreateNullArgumentError(u8"outValue");
+    }
+
+    *outValue = false;
+    LengthA = StringUTF8_GetByteLength(a);
+    LengthB = StringUTF8_GetByteLength(b);
+    if (LengthA != LengthB)
+    {
+        return Error_CreateSuccess();
+    }
+
+    *outValue = Memory_IsEqual(a, b, LengthA);
+    return Error_CreateSuccess();
+}
+
 Error StringUTF8_CopyTo(const unsigned char* source, GenericBuffer* destination)
 {
     if (source == NULL)
