@@ -41,6 +41,7 @@ The library is split into modules, each one having a header file and each for a 
 The modules are (in alphabetical order):
 - WRArrayList: A generic array list.
 - WRBinaryIO: Classes and streams for writing and reading binary data.
+- WRBufferPool: A pool of generic buffers, so they can be reused instead of constantly allocating new ones.
 - WRChar: Utilities for writing and reading UTF-8 and UTF-16 unicode characters.
 - WRCollection: Basically Java's ICollection or C#'s IEnumerable interfaces.
 - WRComparator: Generic object comparison operations like in Java.
@@ -53,6 +54,7 @@ The modules are (in alphabetical order):
 - WRGHDF: A binary file format to store data in, like game saves and such. Used for saving binary data to the disk.
 - WRHash: Hashcode creation functions.
 - WRHashMap: A generic map data structure.
+- WRInt32Vector: 32bit integer vector.
 - WRIO: IO streams like in C# and Java.
 - WRJSON: JSON reading, writing and handling.
 - WRList: An interface for lists.
