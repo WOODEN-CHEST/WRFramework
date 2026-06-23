@@ -138,12 +138,31 @@ size_t GenericBuffer_FirstIndexOf(GenericBuffer* buffer, GenericBufferPredicate 
 
 size_t GenericBuffer_LastIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
 
-bool GenericBuffer_Reverse(GenericBuffer* buffer);
+/* Bytes of scratch storage required by the sort and reverse operations that take a scratch buffer.
+ * Allocate at least this many bytes (sized for the largest case) and reuse it across calls. */
+static inline size_t GenericBuffer_GetSortScratchSize(GenericBuffer* buffer)
+{
+    return buffer->_elementSize * 2;
+}
+
+/* Reverses the buffer in place. The plain form takes a caller-owned scratch buffer of at least
+ * GenericBuffer_GetSortScratchSize(buffer) bytes (reuse it to avoid per-call allocation); passing
+ * NULL allocates internally. The ...Allocating form always allocates and frees the scratch. */
+bool GenericBuffer_Reverse(GenericBuffer* buffer, void* scratch);
+
+bool GenericBuffer_ReverseAllocating(GenericBuffer* buffer);
 
 
-bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData);
+/* Sort operations: prefer the plain form with a reusable caller-owned scratch buffer of at least
+ * GenericBuffer_GetSortScratchSize(buffer) bytes (NULL allocates internally). The ...Allocating
+ * forms always allocate and free the scratch for you. */
+bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch);
 
-bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData);
+bool GenericBuffer_SortAscendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData);
+
+bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch);
+
+bool GenericBuffer_SortDescendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData);
 
 bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
 

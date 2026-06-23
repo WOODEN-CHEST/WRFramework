@@ -133,37 +133,72 @@ Error IList_GetLast(IList* self, void* outElement);
 
 
 
-Error IList_SortAscending(IList* self, IListComparator comparator, void* userData);
+/**
+ * Scan / sort / reduce operations need a small element-sized scratch buffer (because list elements
+ * may only be reachable by value through the interface). Each operation comes in two forms:
+ *
+ *   - The plain form (e.g. IList_Filter) takes a caller-owned `scratch` buffer. PREFER THIS FORM:
+ *     allocate one scratch buffer of IList_GetScratchSize(self) bytes, reuse it across many calls,
+ *     and these operations perform no per-call allocation. Passing NULL for `scratch` makes the
+ *     call allocate and free internally (a convenience, but it hides an allocation).
+ *   - The ...Allocating form (e.g. IList_FilterAllocating) always allocates and frees the scratch
+ *     for you. Use it only when you have no reusable scratch buffer to provide.
+ *
+ * `scratch` must be at least IList_GetScratchSize(self) bytes; that size is safe for every operation
+ * here (it is sized for the largest case).
+ */
+static inline size_t IList_GetScratchSize(IList* self)
+{
+    return self->_elementSize * 2;
+}
 
-Error IList_SortDescending(IList* self, IListComparator comparator, void* userData);
+Error IList_SortAscending(IList* self, IListComparator comparator, void* userData, void* scratch);
+Error IList_SortAscendingAllocating(IList* self, IListComparator comparator, void* userData);
 
-Error IList_Filter(IList* self, IListPredicate predicate, void* userData);
+Error IList_SortDescending(IList* self, IListComparator comparator, void* userData, void* scratch);
+Error IList_SortDescendingAllocating(IList* self, IListComparator comparator, void* userData);
 
-Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData);
+Error IList_Filter(IList* self, IListPredicate predicate, void* userData, void* scratch);
+Error IList_FilterAllocating(IList* self, IListPredicate predicate, void* userData);
 
-Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
+Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData, void* scratch);
+Error IList_MapAllocating(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData);
 
-Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
+Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch);
+Error IList_SumIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
 
-Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
+Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch);
+Error IList_SumDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
 
-Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
+Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch);
+Error IList_MaxIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
 
-Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
+Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch);
+Error IList_MaxDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
 
-Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
+Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch);
+Error IList_MinIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
 
-Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool* outValue);
+Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch);
+Error IList_MinDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
 
-Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
+Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool* outValue, void* scratch);
+Error IList_ContainsAllocating(IList* self, IListPredicate predicate, void* userData, bool* outValue);
 
-Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
+Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch);
+Error IList_CountWhereAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
 
-Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
+Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch);
+Error IList_FirstIndexOfAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
 
-Error IList_Reverse(IList* self);
+Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch);
+Error IList_LastIndexOfAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
 
-Error IList_CopyTo(IList* self, GenericBuffer* destination);
+Error IList_Reverse(IList* self, void* scratch);
+Error IList_ReverseAllocating(IList* self);
+
+Error IList_CopyTo(IList* self, GenericBuffer* destination, void* scratch);
+Error IList_CopyToAllocating(IList* self, GenericBuffer* destination);
 
 
 Error IList_Deconstruct(IList* self);

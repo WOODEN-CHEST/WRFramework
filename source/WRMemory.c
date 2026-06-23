@@ -234,10 +234,11 @@ static void GenericBuffer_QuickSort(GenericBufferSortContext* context,
     }
 }
 
-static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, int direction)
+static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, int direction, void* scratch)
 {
     GenericBufferSortContext Context;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     unsigned char* PivotBuffer = NULL;
     unsigned char* SwapBuffer = NULL;
     size_t ScratchSize = 0;
@@ -260,7 +261,8 @@ static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferCompa
         return false;
     }
 
-    ScratchBuffer = Memory_Allocate(ScratchSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ScratchSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     PivotBuffer = ScratchBuffer;
     SwapBuffer = ScratchBuffer + buffer->_elementSize;
     Context = (GenericBufferSortContext)
@@ -273,7 +275,7 @@ static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferCompa
 
     GenericBuffer_QuickSort(&Context, 0, buffer->_count - 1, PivotBuffer, SwapBuffer);
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     return true;
 }
 
@@ -904,9 +906,10 @@ size_t GenericBuffer_LastIndexOf(GenericBuffer* buffer, GenericBufferPredicate p
     return GENERIC_BUFFER_INDEX_INVALID;
 }
 
-bool GenericBuffer_Reverse(GenericBuffer* buffer)
+bool GenericBuffer_Reverse(GenericBuffer* buffer, void* scratch)
 {
     unsigned char* Temp = NULL;
+    unsigned char* OwnedScratch = NULL;
 
     if ((buffer == NULL) || (buffer->_count < 2))
     {
@@ -917,7 +920,8 @@ bool GenericBuffer_Reverse(GenericBuffer* buffer)
         return false;
     }
 
-    Temp = Memory_Allocate(buffer->_elementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(buffer->_elementSize);
+    Temp = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
 
     for (size_t Index = 0; Index < (buffer->_count / 2); Index++)
     {
@@ -926,18 +930,33 @@ bool GenericBuffer_Reverse(GenericBuffer* buffer)
         GenericBuffer_SwapElements(buffer, Index, OppositeIndex, Temp);
     }
 
-    Memory_Free(Temp);
+    Memory_Free(OwnedScratch);
     return true;
 }
 
-bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData)
+bool GenericBuffer_ReverseAllocating(GenericBuffer* buffer)
 {
-    return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_ASCENDING);
+    return GenericBuffer_Reverse(buffer, NULL);
 }
 
-bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData)
+bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch)
 {
-    return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_DESCENDING);
+    return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_ASCENDING, scratch);
+}
+
+bool GenericBuffer_SortAscendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData)
+{
+    return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_ASCENDING, NULL);
+}
+
+bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch)
+{
+    return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_DESCENDING, scratch);
+}
+
+bool GenericBuffer_SortDescendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData)
+{
+    return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_DESCENDING, NULL);
 }
 
 bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData)
