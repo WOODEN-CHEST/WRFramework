@@ -1194,8 +1194,8 @@ static void WriteSplitBuffers(const unsigned char* path,
         ((unsigned char**)segmentPtrBuffer->_data)[PointerWriteIndex++] = SegmentText;
     }
 
-    strBuffer->_count = StringWriteIndex;
-    segmentPtrBuffer->_count = PointerWriteIndex;
+    GenericBuffer_SetCount(strBuffer, StringWriteIndex);
+    GenericBuffer_SetCount(segmentPtrBuffer, PointerWriteIndex);
 }
 
 
@@ -1273,18 +1273,20 @@ Error Path_ChangeExtension(const unsigned char* path, const unsigned char* newEx
         Memory_Copy(path, result->_data, PrefixLength);
     }
 
-    result->_count = PrefixLength;
+    GenericBuffer_SetCount(result, PrefixLength);
     if (NeedsDot)
     {
-        result->_data[result->_count++] = u8'.';
+        result->_data[result->_count] = u8'.';
+        GenericBuffer_CommitCount(result, 1);
     }
     if (NewExtensionLength > 0)
     {
         Memory_Copy(newExtension, result->_data + result->_count, NewExtensionLength);
-        result->_count += NewExtensionLength;
+        GenericBuffer_CommitCount(result, NewExtensionLength);
     }
 
-    result->_data[result->_count++] = 0;
+    result->_data[result->_count] = 0;
+    GenericBuffer_CommitCount(result, 1);
     return Error_CreateSuccess();
 }
 
@@ -1388,7 +1390,7 @@ Error Path_Combine(const unsigned char** paths, size_t pathCount, GenericBuffer*
         return Result;
     }
 
-    result->_count = WriteCombinedPath(paths, pathCount, result->_data) + 1;
+    GenericBuffer_SetCount(result, WriteCombinedPath(paths, pathCount, result->_data) + 1);
     return Error_CreateSuccess();
 }
 
@@ -1795,9 +1797,11 @@ Error Path_EnsureTrailingSeparator(const unsigned char* path, GenericBuffer* res
     }
 
     Memory_Copy(path, result->_data, Length);
-    result->_count = Length;
-    result->_data[result->_count++] = ENVIRONMENT_PATH_SEPARATOR_PRIMARY;
-    result->_data[result->_count++] = 0;
+    GenericBuffer_SetCount(result, Length);
+    result->_data[result->_count] = ENVIRONMENT_PATH_SEPARATOR_PRIMARY;
+    GenericBuffer_CommitCount(result, 1);
+    result->_data[result->_count] = 0;
+    GenericBuffer_CommitCount(result, 1);
     return Error_CreateSuccess();
 }
 

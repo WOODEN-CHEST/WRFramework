@@ -72,9 +72,34 @@ static inline bool GenericBuffer_IsIndexValid(GenericBuffer* buffer, size_t inde
     return (buffer != NULL) && (index < buffer->_count);
 }
 
+// Reports whether 'address' points inside this buffer's current storage, writing its byte offset
+// from the start to *outOffset when it does. Insert operations call this BEFORE any reallocation so
+// a self-aliased element can be relocated safely afterwards. Relational comparison of pointers into
+// different objects is undefined, so the addresses are compared as integers via uintptr_t.
+static bool GenericBuffer_IsAddressInside(GenericBuffer* buffer, const void* address, size_t* outOffset)
+{
+    uintptr_t Base = (uintptr_t)buffer->_data;
+    uintptr_t Target = (uintptr_t)address;
+    uintptr_t End = 0;
+
+    if ((buffer->_data == NULL) || (buffer->_capacity == 0))
+    {
+        return false;
+    }
+
+    End = Base + (uintptr_t)(buffer->_capacity * buffer->_elementSize);
+    if ((Target < Base) || (Target >= End))
+    {
+        return false;
+    }
+
+    *outOffset = (size_t)(Target - Base);
+    return true;
+}
+
 static bool GenericBuffer_DefaultAllocateVariableCallback(GenericBuffer* destination, size_t requestedCapacity)
 {
-    size_t AllocationSize = 0;
+    size_t NewCapacity = 0;
 
     if (destination == NULL)
     {
@@ -84,19 +109,16 @@ static bool GenericBuffer_DefaultAllocateVariableCallback(GenericBuffer* destina
     {
         return false;
     }
-
-    size_t NewCapacity = (destination->_capacity == 0) ? 1 : destination->_capacity;
-    while (NewCapacity < requestedCapacity)
-    {
-        NewCapacity *= DEFAULT_GROWABLE_BUFFER_CAPACITY_MULTIPLIER;
-    }
-    if (NewCapacity > (SIZE_MAX / destination->_elementSize))
+    if (!Memory_TryGrowCapacity(destination->_capacity,
+        requestedCapacity,
+        DEFAULT_GROWABLE_BUFFER_CAPACITY_MULTIPLIER,
+        destination->_elementSize,
+        &NewCapacity))
     {
         return false;
     }
 
-    AllocationSize = NewCapacity * destination->_elementSize;
-    destination->_data = Memory_Reallocate(destination->_data, AllocationSize);
+    destination->_data = Memory_Reallocate(destination->_data, NewCapacity * destination->_elementSize);
     destination->_capacity = NewCapacity;
     return true;
 }
@@ -218,6 +240,7 @@ static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferCompa
     unsigned char* ScratchBuffer = NULL;
     unsigned char* PivotBuffer = NULL;
     unsigned char* SwapBuffer = NULL;
+    size_t ScratchSize = 0;
 
     if ((buffer == NULL) || (comparator == NULL))
     {
@@ -232,7 +255,12 @@ static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferCompa
         return true;
     }
 
-    ScratchBuffer = Memory_Allocate(buffer->_elementSize * 2);
+    if (!Memory_TryMultiplySize(buffer->_elementSize, 2, &ScratchSize))
+    {
+        return false;
+    }
+
+    ScratchBuffer = Memory_Allocate(ScratchSize);
     PivotBuffer = ScratchBuffer;
     SwapBuffer = ScratchBuffer + buffer->_elementSize;
     Context = (GenericBufferSortContext)
@@ -322,6 +350,71 @@ void Memory_Move(void* source, void* destination, size_t size)
     memmove(destination, source, size);
 }
 
+bool Memory_TryMultiplySize(size_t a, size_t b, size_t* outResult)
+{
+    if (outResult == NULL)
+    {
+        return false;
+    }
+    if ((a != 0) && (b > (SIZE_MAX / a)))
+    {
+        return false;
+    }
+
+    *outResult = a * b;
+    return true;
+}
+
+bool Memory_TryAddSize(size_t a, size_t b, size_t* outResult)
+{
+    if (outResult == NULL)
+    {
+        return false;
+    }
+    if (b > (SIZE_MAX - a))
+    {
+        return false;
+    }
+
+    *outResult = a + b;
+    return true;
+}
+
+bool Memory_TryGrowCapacity(size_t startCapacity,
+    size_t requiredCapacity,
+    size_t growthMultiplier,
+    size_t elementSize,
+    size_t* outCapacity)
+{
+    size_t NewCapacity = (startCapacity == 0) ? 1 : startCapacity;
+    size_t MaxCapacity = 0;
+
+    if ((outCapacity == NULL) || (elementSize == 0) || (growthMultiplier < 2))
+    {
+        return false;
+    }
+
+    MaxCapacity = SIZE_MAX / elementSize; // Largest capacity whose byte size does not overflow.
+    if (requiredCapacity > MaxCapacity)
+    {
+        return false;
+    }
+
+    while (NewCapacity < requiredCapacity)
+    {
+        if (NewCapacity > (MaxCapacity / growthMultiplier))
+        {
+            NewCapacity = requiredCapacity; // A further multiply would overflow; clamp to the request.
+            break;
+        }
+
+        NewCapacity *= growthMultiplier;
+    }
+
+    *outCapacity = NewCapacity;
+    return true;
+}
+
 void GenericBuffer_CreateVariable(GenericBuffer* buffer,
     void* destination,
     size_t bufferCapacity,
@@ -343,15 +436,18 @@ void GenericBuffer_CreateVariable(GenericBuffer* buffer,
 void GenericBuffer_AllocateVariable(GenericBuffer* buffer, size_t initialCapacity, size_t elementSize)
 {
     void* Destination = NULL;
+    size_t AllocationSize = 0;
+    size_t ActualCapacity = 0;
 
-    if ((initialCapacity > 0) && (elementSize > 0))
+    if ((initialCapacity > 0) && (elementSize > 0) && Memory_TryMultiplySize(initialCapacity, elementSize, &AllocationSize))
     {
-        Destination = Memory_Allocate(initialCapacity * elementSize);
+        Destination = Memory_Allocate(AllocationSize);
+        ActualCapacity = initialCapacity;
     }
 
     CreateGenericBuffer(buffer,
         Destination,
-        initialCapacity,
+        ActualCapacity,
         elementSize,
         0,
         NULL,
@@ -373,6 +469,22 @@ void GenericBuffer_CreateConstant(GenericBuffer* buffer,
         NULL,
         NULL,
         GenericBufferFlags_FixedCapacity);
+}
+
+void GenericBuffer_CreateReadOnly(GenericBuffer* buffer,
+    void* destination,
+    size_t bufferCapacity,
+    size_t elementSize,
+    size_t elementCount)
+{
+    CreateGenericBuffer(buffer,
+        destination,
+        bufferCapacity,
+        elementSize,
+        elementCount,
+        NULL,
+        NULL,
+        GenericBufferFlags_FixedCapacity | GenericBufferFlags_ReadOnly);
 }
 
 void GenericBuffer_SetCallback(GenericBuffer* buffer, GenericBufferAllocateCallback callback, void* userData)
@@ -458,35 +570,8 @@ bool GenericBuffer_AddFirst(GenericBuffer* buffer, void* item)
 
 bool GenericBuffer_Insert(GenericBuffer* buffer, void* item, size_t index)
 {
-    size_t MovedByteCount = 0;
-    unsigned char* MoveSource = NULL;
-    unsigned char* MoveDestination = NULL;
-
-    if ((buffer == NULL) || (item == NULL))
-    {
-        return false;
-    }
-    if (index > buffer->_count)
-    {
-        return false;
-    }
-    if (!GenericBuffer_CanModify(buffer))
-    {
-        return false;
-    }
-    if (!GenericBuffer_ReserveMoreCapacity(buffer, 1))
-    {
-        return false;
-    }
-
-    MovedByteCount = (buffer->_count - index) * buffer->_elementSize;
-    MoveSource = GenericBuffer_GetElementAddress(buffer, index);
-    MoveDestination = MoveSource + buffer->_elementSize;
-
-    Memory_Move(MoveSource, MoveDestination, MovedByteCount);
-    Memory_Copy(item, MoveSource, buffer->_elementSize);
-    buffer->_count++;
-    return true;
+    // A single insert is a range insert of one element; the aliasing-safe logic lives there.
+    return GenericBuffer_InsertRange(buffer, item, 1, index);
 }
 
 bool GenericBuffer_Replace(GenericBuffer* buffer, void* item, size_t index)
@@ -550,9 +635,12 @@ bool GenericBuffer_AddFirstRange(GenericBuffer* buffer, void* items, size_t item
 
 bool GenericBuffer_InsertRange(GenericBuffer* buffer, void* items, size_t itemCount, size_t index)
 {
+    size_t ElementSize = 0;
+    size_t GapByteCount = 0;
     size_t MovedByteCount = 0;
-    unsigned char* MoveSource = NULL;
-    unsigned char* MoveDestination = NULL;
+    size_t AliasOffset = 0;
+    bool IsAliased = false;
+    unsigned char* GapStart = NULL;
 
     if (buffer == NULL)
     {
@@ -574,17 +662,60 @@ bool GenericBuffer_InsertRange(GenericBuffer* buffer, void* items, size_t itemCo
     {
         return false;
     }
+
+    ElementSize = buffer->_elementSize;
+
+    // Detect aliasing BEFORE reserving, because reserving may reallocate and invalidate 'items'.
+    IsAliased = GenericBuffer_IsAddressInside(buffer, items, &AliasOffset);
+
     if (!GenericBuffer_ReserveMoreCapacity(buffer, itemCount))
     {
         return false;
     }
 
-    MovedByteCount = (buffer->_count - index) * buffer->_elementSize;
-    MoveSource = GenericBuffer_GetElementAddress(buffer, index);
-    MoveDestination = MoveSource + (itemCount * buffer->_elementSize);
+    GapByteCount = itemCount * ElementSize;
+    GapStart = GenericBuffer_GetElementAddress(buffer, index);
+    MovedByteCount = (buffer->_count - index) * ElementSize;
 
-    Memory_Move(MoveSource, MoveDestination, MovedByteCount);
-    GenericBuffer_CopyElements(buffer, index, items, itemCount);
+    // Open the gap. Elements at/after 'index' (including any aliased source elements) shift right
+    // by itemCount; their values are preserved by Memory_Move.
+    Memory_Move(GapStart, GapStart + GapByteCount, MovedByteCount);
+
+    if (!IsAliased)
+    {
+        Memory_Copy(items, GapStart, GapByteCount);
+        buffer->_count += itemCount;
+        return true;
+    }
+
+    // The source is part of this buffer. After opening the gap the original source elements occupy
+    // up to two contiguous spans: those that were before 'index' stayed put, those at/after 'index'
+    // moved right by itemCount. Copy each span into the gap.
+    {
+        size_t SourceStartIndex = AliasOffset / ElementSize;
+        size_t BeforeCount = 0;
+        size_t AfterCount = 0;
+
+        if (SourceStartIndex < index)
+        {
+            BeforeCount = (index - SourceStartIndex < itemCount) ? (index - SourceStartIndex) : itemCount;
+        }
+        AfterCount = itemCount - BeforeCount;
+
+        if (BeforeCount > 0)
+        {
+            Memory_Move(buffer->_data + (SourceStartIndex * ElementSize), GapStart, BeforeCount * ElementSize);
+        }
+        if (AfterCount > 0)
+        {
+            size_t AfterSourceIndex = ((SourceStartIndex < index) ? index : SourceStartIndex) + itemCount;
+
+            Memory_Move(buffer->_data + (AfterSourceIndex * ElementSize),
+                GapStart + (BeforeCount * ElementSize),
+                AfterCount * ElementSize);
+        }
+    }
+
     buffer->_count += itemCount;
     return true;
 }
@@ -1145,6 +1276,56 @@ bool GenericBuffer_TryPrepareForManualMutation(GenericBuffer* buffer, size_t add
         return false;
     }
 
+    return true;
+}
+
+bool GenericBuffer_SetCount(GenericBuffer* buffer, size_t newCount)
+{
+    if (buffer == NULL)
+    {
+        return false;
+    }
+    if (!GenericBuffer_CanModify(buffer))
+    {
+        return false;
+    }
+    if (newCount > buffer->_capacity)
+    {
+        return false;
+    }
+
+    buffer->_count = newCount;
+    return true;
+}
+
+bool GenericBuffer_CommitCount(GenericBuffer* buffer, size_t addedCount)
+{
+    if (buffer == NULL)
+    {
+        return false;
+    }
+    if (addedCount > (SIZE_MAX - buffer->_count))
+    {
+        return false;
+    }
+
+    return GenericBuffer_SetCount(buffer, buffer->_count + addedCount);
+}
+
+bool GenericBuffer_GetWritableTail(GenericBuffer* buffer, size_t requestedCount, void** outTail)
+{
+    if ((buffer == NULL) || (outTail == NULL))
+    {
+        return false;
+    }
+
+    *outTail = NULL;
+    if (!GenericBuffer_TryPrepareForManualMutation(buffer, requestedCount))
+    {
+        return false;
+    }
+
+    *outTail = GenericBuffer_GetElementAddress(buffer, buffer->_count);
     return true;
 }
 

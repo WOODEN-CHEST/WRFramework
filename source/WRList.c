@@ -705,7 +705,7 @@ Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, voi
     }
 
     Memory_Free(ScratchBuffer);
-    destination->_count = DestinationStartIndex + SourceCount;
+    GenericBuffer_SetCount(destination, DestinationStartIndex + SourceCount);
     return Error_CreateSuccess();
 }
 
@@ -1304,7 +1304,7 @@ Error IList_CopyTo(IList* self, GenericBuffer* destination)
     }
 
     Memory_Free(ScratchBuffer);
-    destination->_count = DestinationStartIndex + ElementCount;
+    GenericBuffer_SetCount(destination, DestinationStartIndex + ElementCount);
     return Error_CreateSuccess();
 }
 

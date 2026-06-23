@@ -61,7 +61,14 @@ void GenericBuffer_AllocateVariable(GenericBuffer* buffer,
      size_t initialCapacity,
      size_t elementSize);
 
+/* Creates a fixed-capacity buffer over existing storage. The buffer is still writable in place
+ * (its element count can change up to the capacity); it simply cannot grow. For a buffer that
+ * also rejects all mutation, use GenericBuffer_CreateReadOnly. */
 void GenericBuffer_CreateConstant(GenericBuffer* buffer, void* destination, size_t bufferCapacity, size_t elementSize, size_t elementCount);
+
+/* Creates a read-only, fixed-capacity view over existing storage. Every mutating operation is
+ * rejected; reading and pointer access remain valid. */
+void GenericBuffer_CreateReadOnly(GenericBuffer* buffer, void* destination, size_t bufferCapacity, size_t elementSize, size_t elementCount);
 
 void GenericBuffer_SetCallback(GenericBuffer* buffer, GenericBufferAllocateCallback callback, void* userData);
 
@@ -169,6 +176,20 @@ bool GenericBuffer_SetByte(GenericBuffer* buffer, size_t index, unsigned char by
 
 bool GenericBuffer_TryPrepareForManualMutation(GenericBuffer* buffer, size_t addedElementCount);
 
+/* Sets the element count directly, after the caller has written into reserved capacity.
+ * Fails if the buffer is read-only or if newCount exceeds the current capacity (reserve first).
+ * This is the supported way to update the count after a manual write; never assign _count directly. */
+bool GenericBuffer_SetCount(GenericBuffer* buffer, size_t newCount);
+
+/* Adds addedCount to the current element count (the common "I just appended N elements" case).
+ * Fails if the buffer is read-only or if the resulting count would exceed the current capacity. */
+bool GenericBuffer_CommitCount(GenericBuffer* buffer, size_t addedCount);
+
+/* Reserves room for requestedCount more elements and returns a writable pointer to the tail
+ * (the address one past the last current element). Pair with GenericBuffer_CommitCount/SetCount
+ * after writing. Returns false (and sets *outTail to NULL) if the buffer cannot be grown or is read-only. */
+bool GenericBuffer_GetWritableTail(GenericBuffer* buffer, size_t requestedCount, void** outTail);
+
 
 
 void* Memory_Allocate(size_t size);
@@ -186,6 +207,24 @@ bool Memory_IsEqual(const void* regionA, const void* regionB, size_t size);
 void Memory_Copy(const void* source, void* destination, size_t size);
 
 void Memory_Move(void* source, void* destination, size_t size);
+
+/* Multiplies two sizes, writing the product to *outResult. Returns false on overflow (and leaves
+ * *outResult untouched). Use this before any allocation whose size is a product of two values. */
+bool Memory_TryMultiplySize(size_t a, size_t b, size_t* outResult);
+
+/* Adds two sizes, writing the sum to *outResult. Returns false on overflow. */
+bool Memory_TryAddSize(size_t a, size_t b, size_t* outResult);
+
+/* Computes a geometric growth capacity: starting from startCapacity (floored to 1), repeatedly
+ * multiplies by growthMultiplier until it reaches requiredCapacity, never letting the resulting
+ * byte size (capacity * elementSize) overflow. If a further multiply would overflow it clamps to
+ * exactly requiredCapacity. Returns false if requiredCapacity itself cannot fit, or on bad input
+ * (elementSize 0, multiplier < 2). Shared by every growable allocation callback. */
+bool Memory_TryGrowCapacity(size_t startCapacity,
+    size_t requiredCapacity,
+    size_t growthMultiplier,
+    size_t elementSize,
+    size_t* outCapacity);
 
 size_t Memory_GetTotalAllocationCount(void);
 

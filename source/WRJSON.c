@@ -2018,10 +2018,12 @@ static Error SerializeValue(JSONObjectValue* value,
             Result = Number_Int64ToString(value->Value.Integer, NUMBER_BASE_10, false, &NumberBuffer);
             if (Result.Code == ErrorCode_Success)
             {
-                while ((NumberBuffer._count > 0) && (NumberBuffer._data[NumberBuffer._count - 1] == 0))
+                size_t TrimmedCount = NumberBuffer._count;
+                while ((TrimmedCount > 0) && (NumberBuffer._data[TrimmedCount - 1] == 0))
                 {
-                    NumberBuffer._count--;
+                    TrimmedCount--;
                 }
+                GenericBuffer_SetCount(&NumberBuffer, TrimmedCount);
                 Result = AppendBytes(destination, NumberBuffer._data, NumberBuffer._count, u8"write integer");
             }
             Memory_Free(NumberBuffer._data);
@@ -2037,10 +2039,12 @@ static Error SerializeValue(JSONObjectValue* value,
                 DecimalFormatOptions_CreateShortest(DecimalSeparator_Period));
             if (Result.Code == ErrorCode_Success)
             {
-                while ((NumberBuffer._count > 0) && (NumberBuffer._data[NumberBuffer._count - 1] == 0))
+                size_t TrimmedCount = NumberBuffer._count;
+                while ((TrimmedCount > 0) && (NumberBuffer._data[TrimmedCount - 1] == 0))
                 {
-                    NumberBuffer._count--;
+                    TrimmedCount--;
                 }
+                GenericBuffer_SetCount(&NumberBuffer, TrimmedCount);
                 Result = AppendBytes(destination, NumberBuffer._data, NumberBuffer._count, u8"write real number");
             }
             Memory_Free(NumberBuffer._data);

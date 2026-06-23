@@ -48,13 +48,14 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
     Error Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     while (HasNext && (Result.Code == ErrorCode_Success))
     {
-        if (!GenericBuffer_TryPrepareForManualMutation(buffer, 1))
+        void* TargetTail = NULL;
+        if (!GenericBuffer_GetWritableTail(buffer, 1, &TargetTail))
         {
             CollectionEnumerator_Deconstruct(Enumerator);
             return CreateDestinationBufferTooSmallError();
         }
-        unsigned char* TargetData = buffer->_data + (buffer->_count * buffer->_elementSize);
-        
+        unsigned char* TargetData = TargetTail;
+
         if (isByReference)
         {
             void* TargetPointer = NULL;
@@ -74,7 +75,7 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
             CollectionEnumerator_Deconstruct(Enumerator);
             return Result;
         }
-        buffer->_count += 1;
+        GenericBuffer_CommitCount(buffer, 1);
 
         Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     }

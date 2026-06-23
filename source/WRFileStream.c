@@ -273,16 +273,17 @@ static Error FileStream_Read(void* selfVoid, GenericBuffer* dest, size_t readSiz
     {
         return Error_CreateSuccess();
     }
-    if (!GenericBuffer_TryPrepareForManualMutation(dest, readSize))
+    void* DestinationTail = NULL;
+    if (!GenericBuffer_GetWritableTail(dest, readSize, &DestinationTail))
     {
         return Error_Construct3(ErrorCode_BufferTooSmall,
             u8"Destination buffer is too small to read %zu bytes from the file stream.",
             readSize);
     }
 
-    Destination = dest->_data + dest->_count;
+    Destination = DestinationTail;
     ReadCount = fread(Destination, sizeof(unsigned char), readSize, GetHandle(self));
-    dest->_count += ReadCount;
+    GenericBuffer_CommitCount(dest, ReadCount);
 
     if ((ReadCount < readSize) && (ferror(GetHandle(self)) != 0))
     {

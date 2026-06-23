@@ -92,13 +92,7 @@ static void InitializeEmptyBuffer(GenericBuffer* buffer)
         return;
     }
 
-    buffer->_data = NULL;
-    buffer->_capacity = 0;
-    buffer->_count = 0;
-    buffer->_elementSize = 0;
-    buffer->_userData = NULL;
-    buffer->_requestMoreSpaceCallback = NULL;
-    buffer->_flags = GenericBufferFlags_None;
+    GenericBuffer_CreateVariable(buffer, NULL, 0, 0, 0, NULL, NULL);
 }
 
 static bool ArrayList_RequestMoreSpace(GenericBuffer* destination, size_t requestedCapacity)

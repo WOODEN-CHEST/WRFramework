@@ -151,13 +151,7 @@ static void InitializeEmptyBuffer(GenericBuffer* buffer)
         return;
     }
 
-    buffer->_data = NULL;
-    buffer->_capacity = 0;
-    buffer->_count = 0;
-    buffer->_elementSize = sizeof(unsigned char);
-    buffer->_userData = NULL;
-    buffer->_requestMoreSpaceCallback = NULL;
-    buffer->_flags = GenericBufferFlags_None;
+    GenericBuffer_CreateVariable(buffer, NULL, 0, sizeof(unsigned char), 0, NULL, NULL);
 }
 
 static bool HashMap_HasStorage(HashMap* self)
@@ -476,13 +470,7 @@ static Error HashMap_CalculateGrowthCapacity(HashMap* self, size_t minimumLiveEn
 
 static void HashMap_AdoptStorage(HashMap* self, unsigned char* storage, size_t capacity, size_t byteCount)
 {
-    self->_dataBuffer._data = storage;
-    self->_dataBuffer._capacity = byteCount;
-    self->_dataBuffer._count = byteCount;
-    self->_dataBuffer._elementSize = sizeof(unsigned char);
-    self->_dataBuffer._userData = NULL;
-    self->_dataBuffer._requestMoreSpaceCallback = NULL;
-    self->_dataBuffer._flags = GenericBufferFlags_None;
+    GenericBuffer_CreateVariable(&self->_dataBuffer, storage, byteCount, sizeof(unsigned char), byteCount, NULL, NULL);
     self->_capacity = capacity;
     self->_isActiveBufferOwned = (storage != NULL);
 }

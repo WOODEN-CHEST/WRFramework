@@ -217,7 +217,7 @@ static Error MemoryStream_WriteByte(void* selfVoid, unsigned char byte)
     self->_position++;
     if (self->_buffer->_count < self->_position)
     {
-        self->_buffer->_count = self->_position;
+        GenericBuffer_SetCount(self->_buffer, self->_position);
     }
 
     return Error_CreateSuccess();
@@ -250,7 +250,7 @@ static Error MemoryStream_Write(void* selfVoid, const unsigned char* buffer, siz
     self->_position += bufferSize;
     if (self->_buffer->_count < self->_position)
     {
-        self->_buffer->_count = self->_position;
+        GenericBuffer_SetCount(self->_buffer, self->_position);
     }
 
     return Error_CreateSuccess();
@@ -315,7 +315,7 @@ static Error MemoryStream_Read(void* selfVoid, GenericBuffer* dest, size_t readS
     }
 
     Memory_Copy(self->_buffer->_data + self->_position, dest->_data + dest->_count, ActualReadSize);
-    dest->_count += ActualReadSize;
+    GenericBuffer_CommitCount(dest, ActualReadSize);
     self->_position += ActualReadSize;
     return Error_CreateSuccess();
 }
@@ -423,7 +423,7 @@ Error MemoryStream_SetLength(MemoryStream* self, size_t length)
     PreviousCount = self->_buffer->_count;
     if (length < PreviousCount)
     {
-        self->_buffer->_count = length;
+        GenericBuffer_SetCount(self->_buffer, length);
         if (self->_position > length)
         {
             self->_position = length;
@@ -445,7 +445,7 @@ Error MemoryStream_SetLength(MemoryStream* self, size_t length)
     }
 
     Memory_Zero(self->_buffer->_data + PreviousCount, AddedCount);
-    self->_buffer->_count = length;
+    GenericBuffer_SetCount(self->_buffer, length);
     return Error_CreateSuccess();
 }
 
