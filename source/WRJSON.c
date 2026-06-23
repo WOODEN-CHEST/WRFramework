@@ -2560,67 +2560,94 @@ Error JSONObjectPool_Create(JSONObjectPool** outPool)
     return Error_CreateSuccess();
 }
 
+// Folds a (possibly failed) teardown error into a running tally: counts failures, appends each
+// message to a combined buffer, and always deconstructs the candidate so nothing leaks. Lets JSON
+// pool teardown be best-effort while still reporting every failure in a single returned error.
+static void AccumulateTeardownError(GenericBuffer* messageBuffer, size_t* failureCount, Error candidate)
+{
+    if (candidate.Code != ErrorCode_Success)
+    {
+        (*failureCount)++;
+        if (candidate.Message != NULL)
+        {
+            if (*failureCount > 1)
+            {
+                GenericBuffer_AppendString(messageBuffer, (const unsigned char*)u8"; ");
+            }
+            GenericBuffer_AppendString(messageBuffer, candidate.Message);
+        }
+    }
+
+    Error_Deconstruct(&candidate);
+}
+
 Error JSONObjectPool_Deconstruct(JSONObjectPool* self)
 {
     size_t Count = 0;
-    Error Result = Error_CreateSuccess();
+    size_t FailureCount = 0;
+    GenericBuffer Messages;
+    Error Combined = Error_CreateSuccess();
 
     if (self == NULL)
     {
         return CreateNullArgumentError(u8"self");
     }
 
+    GenericBuffer_AllocateVariable(&Messages, 64, sizeof(unsigned char));
+
     Count = IList_GetElementCount(&self->_allCompounds._list);
     for (size_t Index = 0; Index < Count; Index++)
     {
         JSONCompound* Compound = NULL;
+        Error GetResult = IList_GetElement(&self->_allCompounds._list, Index, &Compound);
 
-        if (IList_GetElement(&self->_allCompounds._list, Index, &Compound).Code == ErrorCode_Success)
+        if (GetResult.Code == ErrorCode_Success)
         {
-            Result = HashMap_Deconstruct(&Compound->_elements);
-            if (Result.Code != ErrorCode_Success)
-            {
-                Memory_Free(Compound);
-                return Result;
-            }
-
+            AccumulateTeardownError(&Messages, &FailureCount, HashMap_Deconstruct(&Compound->_elements));
             Memory_Free(Compound);
         }
+        AccumulateTeardownError(&Messages, &FailureCount, GetResult);
     }
 
     Count = IList_GetElementCount(&self->_allArrays._list);
     for (size_t Index = 0; Index < Count; Index++)
     {
         JSONArray* Array = NULL;
+        Error GetResult = IList_GetElement(&self->_allArrays._list, Index, &Array);
 
-        if (IList_GetElement(&self->_allArrays._list, Index, &Array).Code == ErrorCode_Success)
+        if (GetResult.Code == ErrorCode_Success)
         {
             ArrayList_Deconstruct(&Array->_elements);
             Memory_Free(Array);
         }
+        AccumulateTeardownError(&Messages, &FailureCount, GetResult);
     }
 
     Count = IList_GetElementCount(&self->_allStrings._list);
     for (size_t Index = 0; Index < Count; Index++)
     {
         GenericBuffer* StringBuffer = NULL;
+        Error GetResult = IList_GetElement(&self->_allStrings._list, Index, &StringBuffer);
 
-        if (IList_GetElement(&self->_allStrings._list, Index, &StringBuffer).Code == ErrorCode_Success)
+        if (GetResult.Code == ErrorCode_Success)
         {
             Memory_Free(StringBuffer->_data);
             Memory_Free(StringBuffer);
         }
+        AccumulateTeardownError(&Messages, &FailureCount, GetResult);
     }
 
     Count = IList_GetElementCount(&self->_allKeys._list);
     for (size_t Index = 0; Index < Count; Index++)
     {
         unsigned char* KeyBuffer = NULL;
+        Error GetResult = IList_GetElement(&self->_allKeys._list, Index, &KeyBuffer);
 
-        if (IList_GetElement(&self->_allKeys._list, Index, &KeyBuffer).Code == ErrorCode_Success)
+        if (GetResult.Code == ErrorCode_Success)
         {
             Memory_Free(KeyBuffer);
         }
+        AccumulateTeardownError(&Messages, &FailureCount, GetResult);
     }
 
     ArrayList_Deconstruct(&self->_allCompounds);
@@ -2631,7 +2658,18 @@ Error JSONObjectPool_Deconstruct(JSONObjectPool* self)
     ArrayList_Deconstruct(&self->_availableStrings);
     ArrayList_Deconstruct(&self->_allKeys);
     Memory_Free(self);
-    return Error_CreateSuccess();
+
+    if (FailureCount > 0)
+    {
+        GenericBuffer_NullTerminate(&Messages);
+        Combined = Error_Construct3(ErrorCode_Deconstruct,
+            u8"JSON object pool teardown encountered %zu error(s): %s",
+            FailureCount,
+            (Messages._data != NULL) ? (const char*)Messages._data : "");
+    }
+
+    Memory_Free(Messages._data);
+    return Combined;
 }
 
 Error JSONObjectPool_BorrowCompound(JSONObjectPool* self, JSONCompound** outCompound)
