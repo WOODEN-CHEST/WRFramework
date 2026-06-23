@@ -405,12 +405,13 @@ in usage converted to UTF-8.
   `stringBuffer->_data + offset`. (They used to return raw pointers, which dangle when the buffer grows.)
 - **Events are reentrant.** A `WREvent` handler may raise the same event again; `WREvent_Raise` snapshots
   subscribers onto a per-raise frame, so recursion is safe. Events are still not thread-safe.
-- **WRUserData** is being introduced as the vehicle for caller-attached "user data". The module exists;
-  adopting it across the callback / subscription / pool APIs (replacing the user-data `void*`) is in progress.
-  Intended usage: pass a `const UserData*` to helpers that use it immediately; store a `UserData` by value where
-  it must outlive the call (then hand the callback a pointer to the stored copy). Never pass the 128-byte struct
-  by value as a function argument. The `GenericBuffer` growth-callback context stays a plain `void*` (it is
-  internal allocator plumbing embedded in every buffer, not a user-facing callback).
+- **WRUserData** is the vehicle for caller-attached "user data" across the framework — events, threads, object
+  pools, hash maps (hash + comparators), and the GenericBuffer/IList scan callbacks all take it. Pass a
+  `const UserData*` to callbacks/helpers that use it immediately; structs that must retain it (event
+  subscribers, threads, object pools, hash maps) store a `UserData` by value and hand the callback a pointer to
+  the stored copy. Never pass the 128-byte struct by value as a function argument. The `GenericBuffer`
+  growth-callback context stays a plain `void*` (internal allocator plumbing embedded in every buffer, not a
+  user-facing callback).
 
 
 ---
