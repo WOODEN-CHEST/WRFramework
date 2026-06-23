@@ -101,14 +101,14 @@ static Error CreateOverflowError(const unsigned char* operationName)
 
 static bool StringBuilderBufferAllocate(GenericBuffer* destination, size_t requestedCapacity)
 {
-    void* NewData = Memory_Reallocate(destination->_data, requestedCapacity * destination->_elementSize);
+    size_t NewSize = 0;
 
-    if (NewData == NULL)
+    if (!Memory_TryMultiplySize(requestedCapacity, destination->_elementSize, &NewSize))
     {
         return false;
     }
 
-    destination->_data = NewData;
+    destination->_data = Memory_Reallocate(destination->_data, NewSize);
     destination->_capacity = requestedCapacity;
     return true;
 }

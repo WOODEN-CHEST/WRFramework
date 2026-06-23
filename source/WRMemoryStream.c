@@ -62,8 +62,8 @@ static Error CreateByteBufferRequiredError(const unsigned char* argumentName, si
 
 static bool MemoryStream_Allocate(GenericBuffer* destination, size_t requestedCapacity)
 {
+    size_t StartCapacity = 0;
     size_t NewCapacity = 0;
-    size_t NewSize = 0;
 
     if (requestedCapacity <= destination->_capacity)
     {
@@ -74,21 +74,15 @@ static bool MemoryStream_Allocate(GenericBuffer* destination, size_t requestedCa
         return false;
     }
 
-    NewCapacity = (destination->_capacity == 0) ? MEMORY_STREAM_CAPACITY_DEFAULT : destination->_capacity;
-    while (NewCapacity < requestedCapacity)
-    {
-        NewCapacity *= MEMORY_STREAM_CAPACITY_GROWTH;
-    }
-
-    if (NewCapacity > (SIZE_MAX / destination->_elementSize))
+    StartCapacity = (destination->_capacity == 0) ? MEMORY_STREAM_CAPACITY_DEFAULT : destination->_capacity;
+    if (!Memory_TryGrowCapacity(StartCapacity, requestedCapacity, MEMORY_STREAM_CAPACITY_GROWTH, destination->_elementSize, &NewCapacity))
     {
         return false;
     }
 
-    NewSize = NewCapacity * destination->_elementSize;
     destination->_data = (destination->_data == NULL)
-        ? Memory_Allocate(NewSize)
-        : Memory_Reallocate(destination->_data, NewSize);
+        ? Memory_Allocate(NewCapacity * destination->_elementSize)
+        : Memory_Reallocate(destination->_data, NewCapacity * destination->_elementSize);
     destination->_capacity = NewCapacity;
     return true;
 }

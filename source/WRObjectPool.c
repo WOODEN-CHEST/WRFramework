@@ -430,9 +430,16 @@ Error ObjectPool_Deconstruct(ObjectPool* self)
         for (size_t SlotIndex = 0; SlotIndex < Section->InitializedCount; SlotIndex++)
         {
             Result = DeconstructObjectIfNeeded(self, GetObjectAddress(self, Section, SlotIndex));
-            if ((Result.Code != ErrorCode_Success) && (FirstError.Code == ErrorCode_Success))
+
+            // Best-effort teardown: keep the first error and deconstruct every later one so its
+            // message is not leaked. Error_Deconstruct on a success error is a safe no-op.
+            if (FirstError.Code == ErrorCode_Success)
             {
                 FirstError = Result;
+            }
+            else
+            {
+                Error_Deconstruct(&Result);
             }
         }
         DeconstructSection(Section);
