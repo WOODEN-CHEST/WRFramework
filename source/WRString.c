@@ -231,6 +231,20 @@ static Error AppendBytes(GenericBuffer* destination, const unsigned char* bytes,
     return Error_CreateSuccess();
 }
 
+// Treats the destination as one growing string: if it already ends with a null terminator, drops
+// that terminator so newly appended content continues the existing string instead of leaving an
+// embedded null. Call once before appending; the writer re-terminates at the end. Record-style
+// buffers that hold several null-terminated strings (e.g. StringUTF8_Split output) must NOT use this.
+static void DropTrailingTerminator(GenericBuffer* destination)
+{
+    if ((destination != NULL)
+        && (destination->_count > 0)
+        && (destination->_data[destination->_count - 1] == 0))
+    {
+        GenericBuffer_SetCount(destination, destination->_count - 1);
+    }
+}
+
 static Error WriteBytesToBuffer(GenericBuffer* destination,
     const unsigned char* bytes,
     size_t byteCount,
@@ -243,6 +257,7 @@ static Error WriteBytesToBuffer(GenericBuffer* destination,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     if (byteCount == SIZE_MAX)
     {
         return CreateOverflowError(operationName);
@@ -849,6 +864,7 @@ Error StringUTF8_ToLower(const unsigned char* str, UnicodeData* unicode, Generic
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     while (Index < ByteLength)
     {
@@ -904,6 +920,7 @@ Error StringUTF8_ToUpper(const unsigned char* str, UnicodeData* unicode, Generic
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     while (Index < ByteLength)
     {
@@ -959,6 +976,7 @@ Error StringUTF8_InvertCase(const unsigned char* str, UnicodeData* unicode, Gene
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     while (Index < ByteLength)
     {
@@ -1234,12 +1252,22 @@ Error StringUTF8_Split(const unsigned char* str,
     {
         size_t SegmentOffset = stringBuffer->_count;
 
-        Result = StringUTF8_CopyTo(str, stringBuffer);
+        if ((StringLength > 0) && !IsRegionEncodingValid(str, StringLength))
+        {
+            return CreateInvalidEncodingError(u8"split the string");
+        }
+
+        // Build the single segment as a raw null-terminated record (not via StringUTF8_CopyTo, which
+        // now overwrites a trailing terminator) so the segment buffer stays a sequence of records.
+        Result = AppendBytes(stringBuffer, str, StringLength, u8"split the string");
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
         }
-
+        if (!GenericBuffer_AppendByte(stringBuffer, 0))
+        {
+            return CreateBufferTooSmallError(u8"split the string", stringBuffer->_count + 1);
+        }
         if (!GenericBuffer_AddLast(resultIndices, &SegmentOffset))
         {
             return CreateBufferTooSmallError(u8"split the string", resultIndices->_count + 1);
@@ -1453,6 +1481,7 @@ Error StringUTF8_Concat(const unsigned char* strA,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     LengthA = StringUTF8_GetByteLength(strA);
     LengthB = StringUTF8_GetByteLength(strB);
     if (LengthA > (SIZE_MAX - LengthB - 1))
@@ -1800,6 +1829,7 @@ Error StringUTF8_Join(const unsigned char* separator,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     SeparatorLength = StringUTF8_GetByteLength(separator);
     for (size_t Index = 0; Index < sourcesSize; Index++)
     {
@@ -1867,6 +1897,7 @@ Error StringUTF8_Replace(const unsigned char* str,
         return StringUTF8_CopyTo(str, destination);
     }
 
+    DropTrailingTerminator(destination);
     StringLength = StringUTF8_GetByteLength(str);
     while (SearchIndex < StringLength)
     {
@@ -2081,6 +2112,7 @@ Error StringUTF8_Remove(const unsigned char* str,
         return StringUTF8_CopyTo(str, destination);
     }
 
+    DropTrailingTerminator(destination);
     StringLength = StringUTF8_GetByteLength(str);
     while (SearchIndex < StringLength)
     {
@@ -2144,6 +2176,7 @@ Error StringUTF8_Insert(const unsigned char* str,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     SubstringLength = StringUTF8_GetByteLength(substring);
     if (index > ByteLength)
@@ -2198,6 +2231,7 @@ Error StringUTF8_Reverse(const unsigned char* str, GenericBuffer* destination)
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     Result = GetCharacterIndicesInternal(str, &CharacterIndices);
     if (Result.Code != ErrorCode_Success)
@@ -2249,6 +2283,7 @@ Error StringUTF8_Repeat(const unsigned char* str, GenericBuffer* destination, si
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     if ((count > 0) && (ByteLength > ((SIZE_MAX - 1) / count)))
     {
