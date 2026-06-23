@@ -165,7 +165,7 @@ void WREvent_Deconstruct(WREvent* self)
 Error WREvent_Subscribe(WREvent* self,
     WREventHandlerFunction handler,
     WREventPriority priority,
-    void* userData,
+    const UserData* userData,
     WREventHandle* outHandle)
 {
     WREventHandle Handle = WREVENT_HANDLE_INVALID;
@@ -200,7 +200,7 @@ Error WREvent_Subscribe(WREvent* self,
         ._handle = Handle,
         ._handler = handler,
         ._priority = priority,
-        ._userData = userData,
+        ._userData = (userData != NULL) ? *userData : UserData_CreateEmpty(),
     };
     InsertIndex = WREvent_FindInsertIndex(self, priority);
     if (!GenericBuffer_Insert(self->_activeSubscribers, &Subscriber, InsertIndex))

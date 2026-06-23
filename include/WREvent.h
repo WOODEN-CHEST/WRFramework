@@ -3,6 +3,7 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "WRError.h"
+#include "WRUserData.h"
 
 
 /**
@@ -22,7 +23,7 @@ typedef int64_t WREventPriority;
 
 typedef struct WREventArgsStruct
 {
-    void* _userData;
+    UserData _userData;
     void* _eventArgs;
 } WREventArgs;
 
@@ -33,7 +34,7 @@ typedef struct WREventSubscriberStruct
     uint64_t _handle;
     WREventHandlerFunction _handler;
     WREventPriority _priority;
-    void* _userData;
+    UserData _userData;
 } WREventSubscriber;
 
 typedef struct WREventStruct 
@@ -58,7 +59,7 @@ void WREvent_Deconstruct(WREvent* self);
 Error WREvent_Subscribe(WREvent* self,
     WREventHandlerFunction handler,
     WREventPriority priority,
-    void* userData,
+    const UserData* userData,
     WREventHandle* outHandle);
 
 Error WREvent_Unsubscribe(WREvent* self, WREventHandle handle);
@@ -75,7 +76,7 @@ static inline void* WREventArgs_GetEventArgs(WREventArgs* args)
     return args->_eventArgs;
 }
 
-static inline void* WREventArgs_GetUserData(WREventArgs* args)
+static inline const UserData* WREventArgs_GetUserData(WREventArgs* args)
 {
-    return args->_userData;
+    return &args->_userData;
 }
