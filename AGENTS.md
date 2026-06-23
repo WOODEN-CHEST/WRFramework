@@ -405,6 +405,11 @@ in usage converted to UTF-8.
   `stringBuffer->_data + offset`. (They used to return raw pointers, which dangle when the buffer grows.)
 - **Events are reentrant.** A `WREvent` handler may raise the same event again; `WREvent_Raise` snapshots
   subscribers onto a per-raise frame, so recursion is safe. Events are still not thread-safe.
+- **Collection enumerators are caller-owned.** `ICollection` exposes `ICollection_GetEnumeratorSize` and
+  `ICollection_InitEnumerator(buffer)`: query the size, supply a (reusable or stack) buffer at least that big
+  and suitably aligned, iterate, then `CollectionEnumerator_Deconstruct` (which does NOT free the buffer). The
+  buffer must outlive the enumerator. `ICollection_CreateEnumerator` + `CollectionEnumerator_Destroy` are the
+  allocating convenience pair. (The filesystem `DirectoryEntryEnumerator` is a separate API and is unchanged.)
 - **WRUserData** is the vehicle for caller-attached "user data" across the framework — events, threads, object
   pools, hash maps (hash + comparators), and the GenericBuffer/IList scan callbacks all take it. Pass a
   `const UserData*` to callbacks/helpers that use it immediately; structs that must retain it (event
