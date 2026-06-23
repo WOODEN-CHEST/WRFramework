@@ -11,7 +11,7 @@ typedef struct ListSortContextStruct
 {
     IList* List;
     IListComparator Comparator;
-    void* UserData;
+    const UserData* UserData;
     int Direction;
     unsigned char* ElementBufferA;
     unsigned char* ElementBufferB;
@@ -311,7 +311,7 @@ static Error QuickSortList(ListSortContext* context, size_t lowIndex, size_t hig
     return Error_CreateSuccess();
 }
 
-static Error SortInternal(IList* self, IListComparator comparator, void* userData, int direction, void* scratch)
+static Error SortInternal(IList* self, IListComparator comparator, const UserData* userData, int direction, void* scratch)
 {
     size_t ElementSize = 0;
     size_t ElementCount = 0;
@@ -577,27 +577,27 @@ Error IList_GetLast(IList* self, void* outElement)
     return IList_GetElement(self, ElementCount - 1, outElement);
 }
 
-Error IList_SortAscending(IList* self, IListComparator comparator, void* userData, void* scratch)
+Error IList_SortAscending(IList* self, IListComparator comparator, const UserData* userData, void* scratch)
 {
     return SortInternal(self, comparator, userData, LIST_SORT_ASCENDING, scratch);
 }
 
-Error IList_SortAscendingAllocating(IList* self, IListComparator comparator, void* userData)
+Error IList_SortAscendingAllocating(IList* self, IListComparator comparator, const UserData* userData)
 {
     return SortInternal(self, comparator, userData, LIST_SORT_ASCENDING, NULL);
 }
 
-Error IList_SortDescending(IList* self, IListComparator comparator, void* userData, void* scratch)
+Error IList_SortDescending(IList* self, IListComparator comparator, const UserData* userData, void* scratch)
 {
     return SortInternal(self, comparator, userData, LIST_SORT_DESCENDING, scratch);
 }
 
-Error IList_SortDescendingAllocating(IList* self, IListComparator comparator, void* userData)
+Error IList_SortDescendingAllocating(IList* self, IListComparator comparator, const UserData* userData)
 {
     return SortInternal(self, comparator, userData, LIST_SORT_DESCENDING, NULL);
 }
 
-Error IList_Filter(IList* self, IListPredicate predicate, void* userData, void* scratch)
+Error IList_Filter(IList* self, IListPredicate predicate, const UserData* userData, void* scratch)
 {
     size_t ElementCount = 0;
     size_t WriteIndex = 0;
@@ -663,7 +663,7 @@ Error IList_Filter(IList* self, IListPredicate predicate, void* userData, void* 
     return IList_RemoveRange(self, WriteIndex, ElementCount - WriteIndex);
 }
 
-Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData, void* scratch)
+Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, const UserData* userData, void* scratch)
 {
     size_t SourceCount = 0;
     size_t DestinationStartIndex = 0;
@@ -725,7 +725,7 @@ Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, voi
     return Error_CreateSuccess();
 }
 
-Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch)
+Error IList_SumInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch)
 {
     int64_t Sum = 0;
     size_t ElementCount = 0;
@@ -773,7 +773,7 @@ Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int
     return Error_CreateSuccess();
 }
 
-Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch)
+Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch)
 {
     double Sum = 0.0;
     size_t ElementCount = 0;
@@ -821,7 +821,7 @@ Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userDat
     return Error_CreateSuccess();
 }
 
-Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch)
+Error IList_MaxInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
@@ -878,7 +878,7 @@ Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int
     return Error_CreateSuccess();
 }
 
-Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch)
+Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
@@ -935,7 +935,7 @@ Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userDat
     return Error_CreateSuccess();
 }
 
-Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch)
+Error IList_MinInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
@@ -992,7 +992,7 @@ Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int
     return Error_CreateSuccess();
 }
 
-Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch)
+Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
@@ -1049,7 +1049,7 @@ Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userDat
     return Error_CreateSuccess();
 }
 
-Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool* outValue, void* scratch)
+Error IList_Contains(IList* self, IListPredicate predicate, const UserData* userData, bool* outValue, void* scratch)
 {
     size_t Index = 0;
     size_t ElementSize = 0;
@@ -1100,7 +1100,7 @@ Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool
     return Error_CreateSuccess();
 }
 
-Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch)
+Error IList_CountWhere(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch)
 {
     size_t Count = 0;
     size_t ElementCount = 0;
@@ -1150,7 +1150,7 @@ Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, si
     return Error_CreateSuccess();
 }
 
-Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch)
+Error IList_FirstIndexOf(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
@@ -1200,7 +1200,7 @@ Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, 
     return Error_CreateSuccess();
 }
 
-Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch)
+Error IList_LastIndexOf(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
@@ -1348,62 +1348,62 @@ Error IList_CopyTo(IList* self, GenericBuffer* destination, void* scratch)
     return Error_CreateSuccess();
 }
 
-Error IList_FilterAllocating(IList* self, IListPredicate predicate, void* userData)
+Error IList_FilterAllocating(IList* self, IListPredicate predicate, const UserData* userData)
 {
     return IList_Filter(self, predicate, userData, NULL);
 }
 
-Error IList_MapAllocating(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData)
+Error IList_MapAllocating(IList* self, GenericBuffer* destination, IListMapper mapper, const UserData* userData)
 {
     return IList_Map(self, destination, mapper, userData, NULL);
 }
 
-Error IList_SumIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue)
+Error IList_SumIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue)
 {
     return IList_SumInt(self, extractor, userData, outValue, NULL);
 }
 
-Error IList_SumDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue)
+Error IList_SumDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue)
 {
     return IList_SumDouble(self, extractor, userData, outValue, NULL);
 }
 
-Error IList_MaxIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue)
+Error IList_MaxIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue)
 {
     return IList_MaxInt(self, extractor, userData, outValue, NULL);
 }
 
-Error IList_MaxDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue)
+Error IList_MaxDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue)
 {
     return IList_MaxDouble(self, extractor, userData, outValue, NULL);
 }
 
-Error IList_MinIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue)
+Error IList_MinIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue)
 {
     return IList_MinInt(self, extractor, userData, outValue, NULL);
 }
 
-Error IList_MinDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue)
+Error IList_MinDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue)
 {
     return IList_MinDouble(self, extractor, userData, outValue, NULL);
 }
 
-Error IList_ContainsAllocating(IList* self, IListPredicate predicate, void* userData, bool* outValue)
+Error IList_ContainsAllocating(IList* self, IListPredicate predicate, const UserData* userData, bool* outValue)
 {
     return IList_Contains(self, predicate, userData, outValue, NULL);
 }
 
-Error IList_CountWhereAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue)
+Error IList_CountWhereAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue)
 {
     return IList_CountWhere(self, predicate, userData, outValue, NULL);
 }
 
-Error IList_FirstIndexOfAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue)
+Error IList_FirstIndexOfAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue)
 {
     return IList_FirstIndexOf(self, predicate, userData, outValue, NULL);
 }
 
-Error IList_LastIndexOfAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue)
+Error IList_LastIndexOfAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue)
 {
     return IList_LastIndexOf(self, predicate, userData, outValue, NULL);
 }

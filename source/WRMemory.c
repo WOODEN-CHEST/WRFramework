@@ -15,7 +15,7 @@ typedef struct GenericBufferSortContextStruct
 {
     GenericBuffer* Buffer;
     GenericBufferComparator Comparator;
-    void* UserData;
+    const UserData* UserData;
     int Direction;
 } GenericBufferSortContext;
 
@@ -234,7 +234,7 @@ static void GenericBuffer_QuickSort(GenericBufferSortContext* context,
     }
 }
 
-static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, int direction, void* scratch)
+static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData, int direction, void* scratch)
 {
     GenericBufferSortContext Context;
     unsigned char* ScratchBuffer = NULL;
@@ -861,12 +861,12 @@ bool GenericBuffer_Clear(GenericBuffer* buffer)
     return true;
 }
 
-bool GenericBuffer_Contains(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData)
+bool GenericBuffer_Contains(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData)
 {
     return (GenericBuffer_FirstIndexOf(buffer, predicate, userData) != GENERIC_BUFFER_INDEX_INVALID);
 }
 
-size_t GenericBuffer_FirstIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData)
+size_t GenericBuffer_FirstIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData)
 {
     if ((buffer == NULL) || (predicate == NULL))
     {
@@ -886,7 +886,7 @@ size_t GenericBuffer_FirstIndexOf(GenericBuffer* buffer, GenericBufferPredicate 
     return GENERIC_BUFFER_INDEX_INVALID;
 }
 
-size_t GenericBuffer_LastIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData)
+size_t GenericBuffer_LastIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData)
 {
     if ((buffer == NULL) || (predicate == NULL))
     {
@@ -939,27 +939,27 @@ bool GenericBuffer_ReverseAllocating(GenericBuffer* buffer)
     return GenericBuffer_Reverse(buffer, NULL);
 }
 
-bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch)
+bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData, void* scratch)
 {
     return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_ASCENDING, scratch);
 }
 
-bool GenericBuffer_SortAscendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData)
+bool GenericBuffer_SortAscendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData)
 {
     return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_ASCENDING, NULL);
 }
 
-bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch)
+bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData, void* scratch)
 {
     return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_DESCENDING, scratch);
 }
 
-bool GenericBuffer_SortDescendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData)
+bool GenericBuffer_SortDescendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData)
 {
     return GenericBuffer_SortInternal(buffer, comparator, userData, GENERIC_BUFFER_SORT_DESCENDING, NULL);
 }
 
-bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData)
+bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData)
 {
     size_t WriteIndex = 0;
 
@@ -993,7 +993,7 @@ bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicat
     return true;
 }
 
-bool GenericBuffer_Map(GenericBuffer* buffer, GenericBuffer* destination, GenericBufferMapper mapper, void* userData)
+bool GenericBuffer_Map(GenericBuffer* buffer, GenericBuffer* destination, GenericBufferMapper mapper, const UserData* userData)
 {
     size_t DestinationStartIndex = 0;
     size_t SourceCount = 0;
@@ -1034,7 +1034,7 @@ bool GenericBuffer_Map(GenericBuffer* buffer, GenericBuffer* destination, Generi
     return true;
 }
 
-bool GenericBuffer_SumInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, void* userData, int64_t* outValue)
+bool GenericBuffer_SumInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, const UserData* userData, int64_t* outValue)
 {
     int64_t Sum = 0;
 
@@ -1052,7 +1052,7 @@ bool GenericBuffer_SumInt(GenericBuffer* buffer, GenericBufferIntExtractor extra
     return true;
 }
 
-bool GenericBuffer_SumDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, void* userData, double* outValue)
+bool GenericBuffer_SumDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, const UserData* userData, double* outValue)
 {
     double Sum = 0.0;
 
@@ -1070,7 +1070,7 @@ bool GenericBuffer_SumDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor
     return true;
 }
 
-bool GenericBuffer_MaxInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, void* userData, int64_t* outValue)
+bool GenericBuffer_MaxInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, const UserData* userData, int64_t* outValue)
 {
     int64_t MaxValue = 0;
 
@@ -1099,7 +1099,7 @@ bool GenericBuffer_MaxInt(GenericBuffer* buffer, GenericBufferIntExtractor extra
     return true;
 }
 
-bool GenericBuffer_MaxDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, void* userData, double* outValue)
+bool GenericBuffer_MaxDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, const UserData* userData, double* outValue)
 {
     double MaxValue = 0.0;
 
@@ -1128,7 +1128,7 @@ bool GenericBuffer_MaxDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor
     return true;
 }
 
-bool GenericBuffer_MinInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, void* userData, int64_t* outValue)
+bool GenericBuffer_MinInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, const UserData* userData, int64_t* outValue)
 {
     int64_t MinValue = 0;
 
@@ -1157,7 +1157,7 @@ bool GenericBuffer_MinInt(GenericBuffer* buffer, GenericBufferIntExtractor extra
     return true;
 }
 
-bool GenericBuffer_MinDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, void* userData, double* outValue)
+bool GenericBuffer_MinDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, const UserData* userData, double* outValue)
 {
     double MinValue = 0.0;
 
@@ -1186,7 +1186,7 @@ bool GenericBuffer_MinDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor
     return true;
 }
 
-size_t GenericBuffer_CountWhere(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData)
+size_t GenericBuffer_CountWhere(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData)
 {
     size_t MatchCount = 0;
 

@@ -5,6 +5,7 @@
 #include "WRCollection.h"
 #include "WRComparator.h"
 #include "WRMemory.h"
+#include "WRUserData.h"
 
 
 #define LIST_INDEX_INVALID (~((size_t)0))
@@ -52,15 +53,15 @@ typedef struct IListElementDataStruct
     size_t _index;
 } IListElementData;
 
-typedef bool (*IListPredicate)(IList* list, IListElementData element, void* userData);
+typedef bool (*IListPredicate)(IList* list, IListElementData element, const UserData* userData);
 
-typedef ComparisonResult (*IListComparator)(IList* list, IListElementData a, IListElementData b, void* userData);
+typedef ComparisonResult (*IListComparator)(IList* list, IListElementData a, IListElementData b, const UserData* userData);
 
-typedef void (*IListMapper)(IList* list, IListElementData sourceElement, void* destinationElement, void* userData);
+typedef void (*IListMapper)(IList* list, IListElementData sourceElement, void* destinationElement, const UserData* userData);
 
-typedef int64_t (*IListIntExtractor)(IList* list, IListElementData sourceElement, void* userData);
+typedef int64_t (*IListIntExtractor)(IList* list, IListElementData sourceElement, const UserData* userData);
 
-typedef double (*IListDoubleExtractor)(IList* list, IListElementData sourceElement, void* userData);
+typedef double (*IListDoubleExtractor)(IList* list, IListElementData sourceElement, const UserData* userData);
 
 
 
@@ -152,47 +153,47 @@ static inline size_t IList_GetScratchSize(IList* self)
     return self->_elementSize * 2;
 }
 
-Error IList_SortAscending(IList* self, IListComparator comparator, void* userData, void* scratch);
-Error IList_SortAscendingAllocating(IList* self, IListComparator comparator, void* userData);
+Error IList_SortAscending(IList* self, IListComparator comparator, const UserData* userData, void* scratch);
+Error IList_SortAscendingAllocating(IList* self, IListComparator comparator, const UserData* userData);
 
-Error IList_SortDescending(IList* self, IListComparator comparator, void* userData, void* scratch);
-Error IList_SortDescendingAllocating(IList* self, IListComparator comparator, void* userData);
+Error IList_SortDescending(IList* self, IListComparator comparator, const UserData* userData, void* scratch);
+Error IList_SortDescendingAllocating(IList* self, IListComparator comparator, const UserData* userData);
 
-Error IList_Filter(IList* self, IListPredicate predicate, void* userData, void* scratch);
-Error IList_FilterAllocating(IList* self, IListPredicate predicate, void* userData);
+Error IList_Filter(IList* self, IListPredicate predicate, const UserData* userData, void* scratch);
+Error IList_FilterAllocating(IList* self, IListPredicate predicate, const UserData* userData);
 
-Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData, void* scratch);
-Error IList_MapAllocating(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData);
+Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, const UserData* userData, void* scratch);
+Error IList_MapAllocating(IList* self, GenericBuffer* destination, IListMapper mapper, const UserData* userData);
 
-Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch);
-Error IList_SumIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
+Error IList_SumInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch);
+Error IList_SumIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue);
 
-Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch);
-Error IList_SumDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
+Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch);
+Error IList_SumDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue);
 
-Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch);
-Error IList_MaxIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
+Error IList_MaxInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch);
+Error IList_MaxIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue);
 
-Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch);
-Error IList_MaxDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
+Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch);
+Error IList_MaxDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue);
 
-Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue, void* scratch);
-Error IList_MinIntAllocating(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue);
+Error IList_MinInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch);
+Error IList_MinIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue);
 
-Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue, void* scratch);
-Error IList_MinDoubleAllocating(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue);
+Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch);
+Error IList_MinDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue);
 
-Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool* outValue, void* scratch);
-Error IList_ContainsAllocating(IList* self, IListPredicate predicate, void* userData, bool* outValue);
+Error IList_Contains(IList* self, IListPredicate predicate, const UserData* userData, bool* outValue, void* scratch);
+Error IList_ContainsAllocating(IList* self, IListPredicate predicate, const UserData* userData, bool* outValue);
 
-Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch);
-Error IList_CountWhereAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
+Error IList_CountWhere(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch);
+Error IList_CountWhereAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue);
 
-Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch);
-Error IList_FirstIndexOfAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
+Error IList_FirstIndexOf(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch);
+Error IList_FirstIndexOfAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue);
 
-Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue, void* scratch);
-Error IList_LastIndexOfAllocating(IList* self, IListPredicate predicate, void* userData, size_t* outValue);
+Error IList_LastIndexOf(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch);
+Error IList_LastIndexOfAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue);
 
 Error IList_Reverse(IList* self, void* scratch);
 Error IList_ReverseAllocating(IList* self);

@@ -3,6 +3,7 @@
 #include <stddef.h>
 #include <stdint.h>
 #include "WRComparator.h"
+#include "WRUserData.h"
 
 
 #define GENERIC_BUFFER_INDEX_INVALID (~((size_t)0))
@@ -37,15 +38,15 @@ typedef struct GenericBufferElementDataStruct
     size_t _index;
 } GenericBufferElementData;
 
-typedef bool (*GenericBufferPredicate)(GenericBuffer* buffer, GenericBufferElementData element, void* userData);
+typedef bool (*GenericBufferPredicate)(GenericBuffer* buffer, GenericBufferElementData element, const UserData* userData);
 
-typedef ComparisonResult (*GenericBufferComparator)(GenericBuffer* buffer, GenericBufferElementData a, GenericBufferElementData b, void* userData);
+typedef ComparisonResult (*GenericBufferComparator)(GenericBuffer* buffer, GenericBufferElementData a, GenericBufferElementData b, const UserData* userData);
 
-typedef void (*GenericBufferMapper)(GenericBuffer* buffer, GenericBufferElementData sourceElement, void* destinationElement, void* userData);
+typedef void (*GenericBufferMapper)(GenericBuffer* buffer, GenericBufferElementData sourceElement, void* destinationElement, const UserData* userData);
 
-typedef int64_t (*GenericBufferIntExtractor)(GenericBuffer* buffer, GenericBufferElementData sourceElement, void* userData);
+typedef int64_t (*GenericBufferIntExtractor)(GenericBuffer* buffer, GenericBufferElementData sourceElement, const UserData* userData);
 
-typedef double (*GenericBufferDoubleExtractor)(GenericBuffer* buffer, GenericBufferElementData sourceElement, void* userData);
+typedef double (*GenericBufferDoubleExtractor)(GenericBuffer* buffer, GenericBufferElementData sourceElement, const UserData* userData);
 
 
 // Functions.
@@ -132,11 +133,11 @@ bool GenericBuffer_GetLast(GenericBuffer* buffer, void* out);
 bool GenericBuffer_Clear(GenericBuffer* buffer);
 
 
-bool GenericBuffer_Contains(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
+bool GenericBuffer_Contains(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData);
 
-size_t GenericBuffer_FirstIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
+size_t GenericBuffer_FirstIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData);
 
-size_t GenericBuffer_LastIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
+size_t GenericBuffer_LastIndexOf(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData);
 
 /* Bytes of scratch storage required by the sort and reverse operations that take a scratch buffer.
  * Allocate at least this many bytes (sized for the largest case) and reuse it across calls. */
@@ -156,31 +157,31 @@ bool GenericBuffer_ReverseAllocating(GenericBuffer* buffer);
 /* Sort operations: prefer the plain form with a reusable caller-owned scratch buffer of at least
  * GenericBuffer_GetSortScratchSize(buffer) bytes (NULL allocates internally). The ...Allocating
  * forms always allocate and free the scratch for you. */
-bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch);
+bool GenericBuffer_SortAscending(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData, void* scratch);
 
-bool GenericBuffer_SortAscendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData);
+bool GenericBuffer_SortAscendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData);
 
-bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData, void* scratch);
+bool GenericBuffer_SortDescending(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData, void* scratch);
 
-bool GenericBuffer_SortDescendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, void* userData);
+bool GenericBuffer_SortDescendingAllocating(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData);
 
-bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
+bool GenericBuffer_Filter(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData);
 
-bool GenericBuffer_Map(GenericBuffer* buffer, GenericBuffer* destination, GenericBufferMapper mapper, void* userData);
+bool GenericBuffer_Map(GenericBuffer* buffer, GenericBuffer* destination, GenericBufferMapper mapper, const UserData* userData);
 
-bool GenericBuffer_SumInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, void* userData, int64_t* outValue);
+bool GenericBuffer_SumInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, const UserData* userData, int64_t* outValue);
 
-bool GenericBuffer_SumDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, void* userData, double* outValue);
+bool GenericBuffer_SumDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, const UserData* userData, double* outValue);
 
-bool GenericBuffer_MaxInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, void* userData, int64_t* outValue);
+bool GenericBuffer_MaxInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, const UserData* userData, int64_t* outValue);
 
-bool GenericBuffer_MaxDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, void* userData, double* outValue);
+bool GenericBuffer_MaxDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, const UserData* userData, double* outValue);
 
-bool GenericBuffer_MinInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, void* userData, int64_t* outValue);
+bool GenericBuffer_MinInt(GenericBuffer* buffer, GenericBufferIntExtractor extractor, const UserData* userData, int64_t* outValue);
 
-bool GenericBuffer_MinDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, void* userData, double* outValue);
+bool GenericBuffer_MinDouble(GenericBuffer* buffer, GenericBufferDoubleExtractor extractor, const UserData* userData, double* outValue);
 
-size_t GenericBuffer_CountWhere(GenericBuffer* buffer, GenericBufferPredicate predicate, void* userData);
+size_t GenericBuffer_CountWhere(GenericBuffer* buffer, GenericBufferPredicate predicate, const UserData* userData);
 
 
 bool GenericBuffer_AppendByte(GenericBuffer* buffer, unsigned char byte);
