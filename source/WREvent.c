@@ -273,8 +273,10 @@ size_t WREvent_GetSubscriberCount(WREvent* self)
 
 Error WREvent_Raise(WREvent* self, void* eventArgs)
 {
-    WREventSubscriber* SnapshotSubscribers = NULL;
-    size_t SnapshotCount = 0;
+    GenericBuffer* Snapshot = NULL;
+    size_t FrameStart = 0;
+    size_t FrameCount = 0;
+    Error Result = Error_CreateSuccess();
 
     if (self == NULL)
     {
@@ -284,33 +286,38 @@ Error WREvent_Raise(WREvent* self, void* eventArgs)
     {
         return WREvent_CreateInvalidOperationError(u8"The event must be constructed before it can be raised.");
     }
-    if (!GenericBuffer_Clear(self->_activeRaiseSubscriberSnapshot))
-    {
-        return WREvent_CreateInvalidOperationError(u8"Failed to clear the subscriber snapshot buffer before raising the event.");
-    }
-    if (!GenericBuffer_AddLastRange(self->_activeRaiseSubscriberSnapshot,
-        self->_activeSubscribers->_data,
-        self->_activeSubscribers->_count))
+
+    // The snapshot buffer is treated as a stack of frames so a handler may re-raise this event
+    // recursively. Each raise appends its own snapshot of the current subscribers at the tail and
+    // iterates only that frame; a nested raise appends (and may reallocate) beyond it, then pops
+    // back. The buffer is reused across raises and only grows when a deeper frame needs more room.
+    Snapshot = self->_activeRaiseSubscriberSnapshot;
+    FrameStart = Snapshot->_count;
+    if (!GenericBuffer_AddLastRange(Snapshot, self->_activeSubscribers->_data, self->_activeSubscribers->_count))
     {
         return WREvent_CreateBufferTooSmallError(u8"Failed to create a snapshot of the event subscribers.");
     }
+    FrameCount = self->_activeSubscribers->_count;
 
-    SnapshotCount = self->_activeRaiseSubscriberSnapshot->_count;
-    SnapshotSubscribers = GenericBuffer_GetPointerToFirst(self->_activeRaiseSubscriberSnapshot);
-    for (size_t Index = 0; Index < SnapshotCount; Index++)
+    for (size_t Index = 0; Index < FrameCount; Index++)
     {
+        // Re-derive the base pointer every iteration: a nested raise may have grown (and therefore
+        // reallocated) the shared snapshot buffer, moving this frame in memory.
+        WREventSubscriber* FrameSubscribers = GenericBuffer_GetPointerToFirst(Snapshot);
         WREventArgs Args = (WREventArgs)
         {
-            ._userData = SnapshotSubscribers[Index]._userData,
+            ._userData = FrameSubscribers[FrameStart + Index]._userData,
             ._eventArgs = eventArgs,
         };
-        Error Result = SnapshotSubscribers[Index]._handler(&Args);
 
+        Result = FrameSubscribers[FrameStart + Index]._handler(&Args);
         if (Result.Code != ErrorCode_Success)
         {
-            return Result;
+            break;
         }
     }
 
-    return Error_CreateSuccess();
+    // Always pop this raise's frame (success or failure); capacity is retained for later raises.
+    GenericBuffer_SetCount(Snapshot, FrameStart);
+    return Result;
 }
