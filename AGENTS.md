@@ -73,6 +73,7 @@ The modules are (in alphabetical order):
 - WRThread: Threading operations and functionality.
 - WRUnicode: Unicode funcionality (including converting and testing codepoints).
 - WRUnicodeLoader: Class to load unicode data from a UnicodeData.txt database.
+- WRUserData: A fixed 128-byte value type for caller-attached data (holds either a pointer or a small inline value). Header-only.
 
 Where the framework uses interfaces or abstract classes, it is generally recommended to pass around the non-concrete type
 rather than the concrete one. For storing the object in a variable or struct member, it's context dependent, as
@@ -306,6 +307,18 @@ void List_Append(List* self, int value);
   use the generic buffer's TryPrepareForManualMutation, it handles all constraints, ensure the capacity and only
   returns true if the buffer can be mutated in the requested context. Reading from the generic buffer directly
   without its methods is fine, however.
+- After a manual write, NEVER assign `buffer->_count` (or `_data`/`_capacity`) directly. Use
+  `GenericBuffer_SetCount`, `GenericBuffer_CommitCount` (add N to the count), or `GenericBuffer_GetWritableTail`
+  (reserve + get the write pointer, pair with CommitCount). These validate read-only/capacity; direct field
+  writes bypass the invariants. To construct an empty buffer, use the constructors, not hand-set fields.
+- For size arithmetic that feeds an allocation (count * elementSize, capacity doubling, etc.), use the checked
+  helpers `Memory_TryMultiplySize` / `Memory_TryAddSize` / `Memory_TryGrowCapacity` so overflow can't wrap.
+- `GenericBuffer_Insert`/`InsertRange` are safe even when the source aliases the buffer's own storage
+  (self-append, internal slices) — no need to copy the element out first.
+- Scan/sort/reduce helpers on `IList` and `GenericBuffer` (sort, reverse, filter, etc.) come in two forms:
+  the plain form takes a caller-owned scratch buffer (size from `IList_GetScratchSize` /
+  `GenericBuffer_GetSortScratchSize`) and does NOT allocate per call — PREFER THIS, reusing one scratch buffer.
+  The `...Allocating` form allocates the scratch for you; use it only when you would have to allocate anyway.
 - Functions which write to a generic buffer should NOT clear the buffer beforehand, that is the responsibility of the
   caller of said function.
 - This rule is strict: do not call `GenericBuffer_Clear` inside a function just because that function writes to a
@@ -336,6 +349,11 @@ should also be null. If the error code is not success, there may be a pointer to
 at least remember to deconstruct it to free any used memory by it.
 - Functions that can return errors always have errors as their return value rather than writing to a pointer which
 points to an error object.
+- **Best-effort teardown / cleanup loops:** when a destructor frees several resources and more than one can
+  fail, do NOT overwrite the error variable each iteration (that leaks the previous message) and do NOT
+  early-return on the first failure (that abandons the rest). Keep the first error and `Error_Deconstruct` every
+  later one, or accumulate them; either way, free every resource. Also do not read `.Code` off a temporary
+  `Error` return value without deconstructing it — capture it in a variable first.
 ---
 
 ## Raylib and Header Hygiene
@@ -371,6 +389,28 @@ should be done by extracting its codepoint and testing that, and writing it same
 - If you're dealing with UTF-16 strings (in Windows, for example), then use uint16_t as the unit type for them. However,
 generally you should be trying to make sure the project uses UTF-8, whatever API gave UTF-16 strings should have the strings
 in usage converted to UTF-8.
+- **String writers treat the destination as one growing string.** Functions like `StringUTF8_CopyTo`, `Concat`,
+  `ToLower`, `Replace`, etc. drop an existing trailing null terminator before appending, so composing into the
+  same buffer repeatedly yields one continuous string (not `"a\0b\0"`). Raw byte appends
+  (`GenericBuffer_AppendByte`/`AppendRangeBytes`) and `StringUTF8_Split` are unaffected — Split still builds a
+  sequence of null-terminated records, addressed by the offsets it returns.
+
+
+---
+
+## Framework behavior notes
+
+- **Split returns offsets, not pointers.** `StringUTF8_Split` and `Path_Split` append segment bytes to a string
+  buffer and write each segment's byte offset into a `size_t` index buffer. Recover a segment with
+  `stringBuffer->_data + offset`. (They used to return raw pointers, which dangle when the buffer grows.)
+- **Events are reentrant.** A `WREvent` handler may raise the same event again; `WREvent_Raise` snapshots
+  subscribers onto a per-raise frame, so recursion is safe. Events are still not thread-safe.
+- **WRUserData** is being introduced as the vehicle for caller-attached "user data". The module exists;
+  adopting it across the callback / subscription / pool APIs (replacing the user-data `void*`) is in progress.
+  Intended usage: pass a `const UserData*` to helpers that use it immediately; store a `UserData` by value where
+  it must outlive the call (then hand the callback a pointer to the stored copy). Never pass the 128-byte struct
+  by value as a function argument. The `GenericBuffer` growth-callback context stays a plain `void*` (it is
+  internal allocator plumbing embedded in every buffer, not a user-facing callback).
 
 
 ---
