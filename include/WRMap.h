@@ -6,6 +6,7 @@
 #include "WRCollection.h"
 #include "WRError.h"
 #include "WRCompile.h"
+#include "WRUserData.h"
 
 
 // Types.
@@ -17,9 +18,9 @@ typedef enum MapFlagsEnum
     MapFlags_IsReadOnly = (1 << 0),
 } MapFlags;
 
-typedef bool (*MapKeyComparator)(IMap* map, const void* key1, const void* key2, void* userData);
+typedef bool (*MapKeyComparator)(IMap* map, const void* key1, const void* key2, const UserData* userData);
 
-typedef bool (*MapValueComparator)(IMap* map, const void* value1, const void* value2, void* userData);
+typedef bool (*MapValueComparator)(IMap* map, const void* value1, const void* value2, const UserData* userData);
 
 typedef struct MapEntryViewStruct
 {
@@ -58,13 +59,13 @@ static inline size_t IMap_GetKeySize(IMap* map);
 
 static inline size_t IMap_GetValueSize(IMap* map);
 
-static inline bool MapKeyComparator_Default(IMap* map, const void* key1, const void* key2, void* userData)
+static inline bool MapKeyComparator_Default(IMap* map, const void* key1, const void* key2, const UserData* userData)
 {
     UNUSED(userData);
     return Memory_IsEqual(key1, key2, IMap_GetKeySize(map));
 }
 
-static inline bool MapValueComparator_Default(IMap* map, const void* value1, const void* value2, void* userData)
+static inline bool MapValueComparator_Default(IMap* map, const void* value1, const void* value2, const UserData* userData)
 {
     UNUSED(userData);
     return Memory_IsEqual(value1, value2, IMap_GetValueSize(map));

@@ -30,7 +30,7 @@ static Error CreateForeignBufferError(void)
         u8"The provided buffer does not belong to this buffer pool.");
 }
 
-static HashCode BufferPool_HashElementSize(IMap* map, const void* key, void* userData)
+static HashCode BufferPool_HashElementSize(IMap* map, const void* key, const UserData* userData)
 {
     const size_t* ElementSize = key;
 
@@ -76,7 +76,7 @@ static Error BufferPool_ResetBorrowedBuffer(GenericBuffer* buffer)
         u8"Could not clear the pooled buffer.");
 }
 
-static Error BufferPool_InitializeBorrowedBuffer(void* object, void* userData)
+static Error BufferPool_InitializeBorrowedBuffer(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
 
@@ -96,7 +96,7 @@ static Error BufferPool_InitializeBorrowedBuffer(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error BufferPool_ResetBufferObject(void* object, void* userData)
+static Error BufferPool_ResetBufferObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
 
@@ -109,7 +109,7 @@ static Error BufferPool_ResetBufferObject(void* object, void* userData)
     return BufferPool_ResetBorrowedBuffer(Buffer);
 }
 
-static Error BufferPool_DeconstructBufferObject(void* object, void* userData)
+static Error BufferPool_DeconstructBufferObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
 

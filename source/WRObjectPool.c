@@ -163,7 +163,7 @@ static Error ResetObjectForReuse(ObjectPool* self, void* object)
 {
     if (self->_lifecycle.ResetObject != NULL)
     {
-        return self->_lifecycle.ResetObject(object, self->_userData);
+        return self->_lifecycle.ResetObject(object, &self->_userData);
     }
 
     Memory_Zero(object, self->_elementSize);
@@ -174,7 +174,7 @@ static Error ConstructObjectIfNeeded(ObjectPool* self, void* object)
 {
     if (self->_lifecycle.ConstructObject != NULL)
     {
-        return self->_lifecycle.ConstructObject(object, self->_userData);
+        return self->_lifecycle.ConstructObject(object, &self->_userData);
     }
 
     return Error_CreateSuccess();
@@ -184,7 +184,7 @@ static Error DeconstructObjectIfNeeded(ObjectPool* self, void* object)
 {
     if (self->_lifecycle.DeconstructObject != NULL)
     {
-        return self->_lifecycle.DeconstructObject(object, self->_userData);
+        return self->_lifecycle.DeconstructObject(object, &self->_userData);
     }
 
     return Error_CreateSuccess();
@@ -380,7 +380,7 @@ Error ObjectPool_Construct2(ObjectPool* self,
     size_t elementSize,
     size_t sectionCapacity,
     ObjectPoolLifecycle lifecycle,
-    void* userData)
+    const UserData* userData)
 {
     if (self == NULL)
     {
@@ -401,7 +401,7 @@ Error ObjectPool_Construct2(ObjectPool* self,
     self->_sectionCapacity = sectionCapacity;
     self->_nextSectionSearchIndex = 0;
     self->_lifecycle = lifecycle;
-    self->_userData = userData;
+    self->_userData = (userData != NULL) ? *userData : UserData_CreateEmpty();
     return Error_CreateSuccess();
 }
 

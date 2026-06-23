@@ -260,7 +260,7 @@ static bool HashMap_KeysAreEqual(HashMap* self, const void* storedKey, const voi
     return self->_keyComparator(HashMap_AsMap(self),
         storedKey,
         requestedKey,
-        self->_keyComparatorUserData);
+        &self->_keyComparatorUserData);
 }
 
 static bool HashMap_ValuesAreEqual(HashMap* self, const void* storedValue, const void* requestedValue)
@@ -268,7 +268,7 @@ static bool HashMap_ValuesAreEqual(HashMap* self, const void* storedValue, const
     return self->_valueComparator(HashMap_AsMap(self),
         storedValue,
         requestedValue,
-        self->_valueComparatorUserData);
+        &self->_valueComparatorUserData);
 }
 
 static bool HashMap_IsBucketOccupied(HashMapBucketMetadata bucket)
@@ -638,11 +638,11 @@ static void InitializeEmptyHashMap(HashMap* self)
     self->_map._keySize = 0;
     self->_map._valueSize = 0;
     self->_keyHashFunction = NULL;
-    self->_keyHashFunctionUserData = NULL;
+    self->_keyHashFunctionUserData = UserData_CreateEmpty();
     self->_keyComparator = MapKeyComparator_Default;
-    self->_keyComparatorUserData = NULL;
+    self->_keyComparatorUserData = UserData_CreateEmpty();
     self->_valueComparator = MapValueComparator_Default;
-    self->_valueComparatorUserData = NULL;
+    self->_valueComparatorUserData = UserData_CreateEmpty();
     InitializeEmptyBuffer(&self->_dataBuffer);
     self->_isActiveBufferOwned = false;
     self->_entryCount = 0;
@@ -737,7 +737,7 @@ static Error HashMap_MapGetElement(void* self, const void* key, void* outValue)
         return CreateKeyNotFoundError();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.WasFound)
     {
@@ -772,7 +772,7 @@ static Error HashMap_MapGetPointerToElement(void* self, const void* key, void** 
         return CreateKeyNotFoundError();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.WasFound)
     {
@@ -809,7 +809,7 @@ static Error HashMap_MapAdd(void* self, const void* key, const void* value, bool
         return Result;
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.CanInsert)
     {
@@ -865,7 +865,7 @@ static Error HashMap_MapRemove(void* self, const void* key, bool* outWasRemoved)
         return Error_CreateSuccess();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.WasFound)
     {
@@ -932,7 +932,7 @@ static Error HashMap_MapContainsKey(void* self, const void* key, bool* outContai
         return Error_CreateSuccess();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     *outContainsKey = SlotResult.WasFound;
     return Error_CreateSuccess();

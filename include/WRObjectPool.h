@@ -3,10 +3,11 @@
 #include <stdint.h>
 #include <stddef.h>
 #include "WRError.h"
+#include "WRUserData.h"
 
 
 // Types.
-typedef Error (*ObjectPoolObjectLifecycleCallback)(void* object, void* userData);
+typedef Error (*ObjectPoolObjectLifecycleCallback)(void* object, const UserData* userData);
 
 typedef struct ObjectPoolLifecycleStruct
 {
@@ -22,7 +23,7 @@ typedef struct ObjectPoolStruct
     size_t _sectionCapacity; // Object count per section.
     size_t _nextSectionSearchIndex;
     ObjectPoolLifecycle _lifecycle;
-    void* _userData;
+    UserData _userData;
 } ObjectPool;
 
 
@@ -33,7 +34,7 @@ Error ObjectPool_Construct2(ObjectPool* self,
     size_t elementSize,
     size_t sectionCapacity,
     ObjectPoolLifecycle lifecycle,
-    void* userData);
+    const UserData* userData);
 
 Error ObjectPool_Deconstruct(ObjectPool* self);
 

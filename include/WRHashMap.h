@@ -3,17 +3,17 @@
 
 
 // Types.
-typedef HashCode (*HashMapKeyHashFunction)(IMap* map, const void* key, void* userData);
+typedef HashCode (*HashMapKeyHashFunction)(IMap* map, const void* key, const UserData* userData);
 
 typedef struct HashMapStruct
 {
     IMap _map;
     HashMapKeyHashFunction _keyHashFunction;
-    void* _keyHashFunctionUserData;
+    UserData _keyHashFunctionUserData;
     MapKeyComparator _keyComparator;
-    void* _keyComparatorUserData;
+    UserData _keyComparatorUserData;
     MapValueComparator _valueComparator;
-    void* _valueComparatorUserData;
+    UserData _valueComparatorUserData;
     GenericBuffer _dataBuffer;
     bool _isActiveBufferOwned;
     size_t _entryCount;
@@ -26,11 +26,11 @@ typedef struct HashMapConstructOptionsStruct
     size_t KeySize;
     size_t ValueSize;
     HashMapKeyHashFunction KeyHashFunction;
-    void* KeyHashFunctionUserData;
+    UserData KeyHashFunctionUserData;
     MapKeyComparator KeyComparator;
-    void* KeyComparatorUserData;
+    UserData KeyComparatorUserData;
     MapValueComparator ValueComparator;
-    void* ValueComparatorUserData;
+    UserData ValueComparatorUserData;
     size_t InitialCapacity;
 } HashMapConstructOptions;
 
@@ -44,11 +44,11 @@ static inline HashMapConstructOptions HashMapConstructOptions_CreateDefault(size
         .KeySize = keySize,
         .ValueSize = valueSize,
         .KeyHashFunction = keyHashFunction,
-        .KeyHashFunctionUserData = NULL,
+        .KeyHashFunctionUserData = UserData_CreateEmpty(),
         .KeyComparator = NULL,
-        .KeyComparatorUserData = NULL,
+        .KeyComparatorUserData = UserData_CreateEmpty(),
         .ValueComparator = NULL,
-        .ValueComparatorUserData = NULL,
+        .ValueComparatorUserData = UserData_CreateEmpty(),
         .InitialCapacity = 0,
     };
 }

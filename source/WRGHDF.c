@@ -228,7 +228,7 @@ static size_t GetStringByteCount(GenericBuffer* stringBuffer)
     return stringBuffer->_count;
 }
 
-static HashCode GHDFEntryIDHash(IMap* map, const void* key, void* userData)
+static HashCode GHDFEntryIDHash(IMap* map, const void* key, const UserData* userData)
 {
     const GHDFEntryID* KeyValue = key;
     (void)map;
@@ -942,10 +942,10 @@ static Error GHDFValidateBorrowedArray(GHDFArray* array, GHDFValueType expectedT
     return Error_CreateSuccess();
 }
 
-static Error GHDFStringBuffer_ConstructObject(void* object, void* userData)
+static Error GHDFStringBuffer_ConstructObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     GHDFBorrowToken* Token = NULL;
 
     if (Buffer == NULL)
@@ -961,11 +961,11 @@ static Error GHDFStringBuffer_ConstructObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFStringBuffer_ResetObject(void* object, void* userData)
+static Error GHDFStringBuffer_ResetObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
     GHDFBorrowToken* Token = NULL;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
 
     if (Buffer == NULL)
     {
@@ -987,7 +987,7 @@ static Error GHDFStringBuffer_ResetObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFStringBuffer_DeconstructObject(void* object, void* userData)
+static Error GHDFStringBuffer_DeconstructObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
     (void)userData;
@@ -1003,10 +1003,10 @@ static Error GHDFStringBuffer_DeconstructObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFCompoundPool_ConstructObject(void* object, void* userData)
+static Error GHDFCompoundPool_ConstructObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFCompound_Initialize(Compound);
 
     if (Result.Code != ErrorCode_Success)
@@ -1018,10 +1018,10 @@ static Error GHDFCompoundPool_ConstructObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFArrayPool_ConstructObject(void* object, void* userData)
+static Error GHDFArrayPool_ConstructObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFArray_Initialize(Array);
 
     if (Result.Code != ErrorCode_Success)
@@ -1096,10 +1096,10 @@ static Error GHDFCompound_ClearInternal(GHDFCompound* self)
     return IMap_Clear(HashMap_AsMap(&self->_entries));
 }
 
-static Error GHDFCompoundPool_ResetObject(void* object, void* userData)
+static Error GHDFCompoundPool_ResetObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFCompound_ClearInternal(Compound);
 
     if (Result.Code != ErrorCode_Success)
@@ -1112,7 +1112,7 @@ static Error GHDFCompoundPool_ResetObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFCompoundPool_DeconstructObject(void* object, void* userData)
+static Error GHDFCompoundPool_DeconstructObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
     (void)userData;
@@ -1164,10 +1164,10 @@ static Error GHDFArray_ClearInternal(GHDFArray* self)
     return IList_Clear(&self->_values._list);
 }
 
-static Error GHDFArrayPool_ResetObject(void* object, void* userData)
+static Error GHDFArrayPool_ResetObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFArray_ClearInternal(Array);
 
     if (Result.Code != ErrorCode_Success)
@@ -1181,7 +1181,7 @@ static Error GHDFArrayPool_ResetObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFArrayPool_DeconstructObject(void* object, void* userData)
+static Error GHDFArrayPool_DeconstructObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
     (void)userData;
@@ -2219,11 +2219,16 @@ static Error GHDFObjectPool_Construct(GHDFObjectPool* self)
     }
 
     Memory_Zero(self, sizeof(*self));
+
+    // The pools keep a back-pointer to this owner in their UserData so the lifecycle callbacks can
+    // reach it. The address stays valid for every borrow/return/teardown (self outlives the pools).
+    UserData PoolUserData = UserData_FromPointer(self);
+
     Result = ObjectPool_Construct2(&self->_compoundPool,
         sizeof(GHDFCompound),
         GHDF_POOL_SECTION_CAPACITY,
         CompoundLifecycle,
-        self);
+        &PoolUserData);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -2233,7 +2238,7 @@ static Error GHDFObjectPool_Construct(GHDFObjectPool* self)
         sizeof(GHDFArray),
         GHDF_POOL_SECTION_CAPACITY,
         ArrayLifecycle,
-        self);
+        &PoolUserData);
     if (Result.Code != ErrorCode_Success)
     {
         Error CleanupResult = ObjectPool_Deconstruct(&self->_compoundPool);
@@ -2250,7 +2255,7 @@ static Error GHDFObjectPool_Construct(GHDFObjectPool* self)
         sizeof(GenericBuffer),
         GHDF_POOL_SECTION_CAPACITY,
         StringLifecycle,
-        self);
+        &PoolUserData);
     if (Result.Code != ErrorCode_Success)
     {
         Error CleanupResult = ObjectPool_Deconstruct(&self->_arrayPool);

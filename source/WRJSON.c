@@ -386,7 +386,7 @@ static CodePoint DecodeSurrogatePair(uint16_t highSurrogate, uint16_t lowSurroga
     return (CodePoint)(UINT32_C(0x10000) + ((HighPart << 10) | LowPart));
 }
 
-static HashCode JSONKey_Hash(IMap* map, const void* key, void* userData)
+static HashCode JSONKey_Hash(IMap* map, const void* key, const UserData* userData)
 {
     const unsigned char* const* KeyPointer = key;
 
@@ -400,7 +400,7 @@ static HashCode JSONKey_Hash(IMap* map, const void* key, void* userData)
     return Hash_String(*KeyPointer);
 }
 
-static bool JSONKey_AreEqual(IMap* map, const void* key1, const void* key2, void* userData)
+static bool JSONKey_AreEqual(IMap* map, const void* key1, const void* key2, const UserData* userData)
 {
     const unsigned char* const* KeyPointer1 = key1;
     const unsigned char* const* KeyPointer2 = key2;
