@@ -4,12 +4,13 @@
 #include <stdint.h>
 #include "WRMemory.h"
 #include "WRError.h"
+#include "WRUserData.h"
 
 
 
 
 // Types.
-typedef void* (*ThreadFunc)(void* userdata);
+typedef void* (*ThreadFunc)(const UserData* userdata);
 typedef struct ThreadStruct Thread;
 typedef struct MutexStruct Mutex;
 typedef struct ConditionVariableStruct ConditionVariable;
@@ -18,7 +19,7 @@ typedef struct ReadWriteLockStruct ReadWriteLock;
 
 
 // Functions.
-Error Thread_Create(Thread** outThread, ThreadFunc entryFunction, void* userdata);
+Error Thread_Create(Thread** outThread, ThreadFunc entryFunction, const UserData* userdata);
 
 Error Thread_Join(Thread* self, void** outResult);
 

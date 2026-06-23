@@ -22,7 +22,7 @@
 struct ThreadStruct
 {
     ThreadFunc _entryFunction;
-    void* _userdata;
+    UserData _userdata;
     void* _result;
     atomic_bool _hasCompleted;
     bool _isJoinable;
