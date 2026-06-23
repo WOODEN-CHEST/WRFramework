@@ -50,14 +50,6 @@ static Error CreateByteBufferTypeError(const unsigned char* argumentName, size_t
         elementSize);
 }
 
-static Error CreatePointerBufferTypeError(const unsigned char* argumentName, size_t elementSize)
-{
-    return Error_Construct3(ErrorCode_IllegalArgument,
-        u8"String argument \"%s\" must be a pointer buffer, got element size %zu.",
-        argumentName,
-        elementSize);
-}
-
 static Error CreateIndexBufferTypeError(const unsigned char* argumentName, size_t elementSize)
 {
     return Error_Construct3(ErrorCode_IllegalArgument,
@@ -179,20 +171,6 @@ static Error ValidateByteBuffer(GenericBuffer* buffer, const unsigned char* argu
     return Error_CreateSuccess();
 }
 
-static Error ValidatePointerBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
-{
-    if (buffer == NULL)
-    {
-        return CreateNullArgumentError(argumentName);
-    }
-    if (buffer->_elementSize != sizeof(unsigned char*))
-    {
-        return CreatePointerBufferTypeError(argumentName, buffer->_elementSize);
-    }
-
-    return Error_CreateSuccess();
-}
-
 static Error ValidateIndexBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
 {
     if (buffer == NULL)
@@ -210,11 +188,6 @@ static Error ValidateIndexBuffer(GenericBuffer* buffer, const unsigned char* arg
 static Error PrepareByteBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
 {
     return ValidateByteBuffer(buffer, argumentName);
-}
-
-static Error PreparePointerBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
-{
-    return ValidatePointerBuffer(buffer, argumentName);
 }
 
 static Error PrepareIndexBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
@@ -1215,7 +1188,7 @@ Error StringUTF8_Split(const unsigned char* str,
     size_t delimeterCount,
     StringSplitOptions splitOptions,
     GenericBuffer* stringBuffer,
-    GenericBuffer* resultPointers,
+    GenericBuffer* resultIndices,
     UnicodeData* unicode)
 {
     size_t StringLength = 0;
@@ -1233,7 +1206,7 @@ Error StringUTF8_Split(const unsigned char* str,
     {
         return Result;
     }
-    Result = PreparePointerBuffer(resultPointers, u8"resultPointers");
+    Result = PrepareIndexBuffer(resultIndices, u8"resultIndices");
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -1259,8 +1232,7 @@ Error StringUTF8_Split(const unsigned char* str,
     StringLength = StringUTF8_GetByteLength(str);
     if ((splitOptions._stringCountLimit == 0) || (delimeterCount == 0))
     {
-        unsigned char* SegmentPointer = NULL;
-        size_t PreviousCount = stringBuffer->_count;
+        size_t SegmentOffset = stringBuffer->_count;
 
         Result = StringUTF8_CopyTo(str, stringBuffer);
         if (Result.Code != ErrorCode_Success)
@@ -1268,10 +1240,9 @@ Error StringUTF8_Split(const unsigned char* str,
             return Result;
         }
 
-        SegmentPointer = (unsigned char*)stringBuffer->_data + PreviousCount;
-        if (!GenericBuffer_AddLast(resultPointers, &SegmentPointer))
+        if (!GenericBuffer_AddLast(resultIndices, &SegmentOffset))
         {
-            return CreateBufferTooSmallError(u8"split the string", resultPointers->_count + 1);
+            return CreateBufferTooSmallError(u8"split the string", resultIndices->_count + 1);
         }
 
         return Error_CreateSuccess();
@@ -1325,7 +1296,6 @@ Error StringUTF8_Split(const unsigned char* str,
             size_t SegmentEnd = (FoundIndex == STRING_INDEX_INVALID) ? StringLength : FoundIndex;
             size_t TrimStart = SegmentStart;
             size_t TrimLength = SegmentEnd - SegmentStart;
-            unsigned char* SegmentPointer = NULL;
 
             if (splitOptions._splitType & StringSplitType_TrimEntries)
             {
@@ -1345,7 +1315,7 @@ Error StringUTF8_Split(const unsigned char* str,
 
             if (!((splitOptions._splitType & StringSplitType_SkipEmptyEntries) && (TrimLength == 0)))
             {
-                size_t PreviousCount = stringBuffer->_count;
+                size_t SegmentOffset = stringBuffer->_count;
 
                 Result = AppendBytes(stringBuffer, str + TrimStart, TrimLength, u8"split the string");
                 if (Result.Code != ErrorCode_Success)
@@ -1357,10 +1327,9 @@ Error StringUTF8_Split(const unsigned char* str,
                     return CreateBufferTooSmallError(u8"split the string", stringBuffer->_count + 1);
                 }
 
-                SegmentPointer = (unsigned char*)stringBuffer->_data + PreviousCount;
-                if (!GenericBuffer_AddLast(resultPointers, &SegmentPointer))
+                if (!GenericBuffer_AddLast(resultIndices, &SegmentOffset))
                 {
-                    return CreateBufferTooSmallError(u8"split the string", resultPointers->_count + 1);
+                    return CreateBufferTooSmallError(u8"split the string", resultIndices->_count + 1);
                 }
 
                 ResultCount++;

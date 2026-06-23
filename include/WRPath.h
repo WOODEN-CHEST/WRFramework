@@ -67,4 +67,10 @@ Error Path_EnsureTrailingSeparator(const unsigned char* path, GenericBuffer* res
 
 bool Path_ContainsDirectorySegments(const unsigned char* path);
 
-Error Path_Split(const unsigned char* path, GenericBuffer* strBuffer, GenericBuffer* segmentPtrBuffer);
+/**
+ * Splits a path into its segments. Each segment's bytes (null-terminated) are written to strBuffer,
+ * and the byte offset of each segment's start within strBuffer is written to segmentIndexBuffer (a
+ * size_t buffer). Offsets, rather than pointers, are returned so they survive any later growth of
+ * strBuffer; recover a segment with (strBuffer->_data + offset).
+ */
+Error Path_Split(const unsigned char* path, GenericBuffer* strBuffer, GenericBuffer* segmentIndexBuffer);

@@ -88,12 +88,19 @@ StringSplitOptions String_CreateSplitOptionsTyped(StringSplitType type);
 
 StringSplitOptions String_CreateSplitOptions(StringSplitType type, size_t maxSplits, StringCaseRule caseRule);
 
+/**
+ * Splits a string into segments. The segment bytes (each null-terminated) are appended to
+ * stringBuffer, and the byte offset of each segment's start within stringBuffer is appended to
+ * resultIndices (a size_t buffer). Offsets, rather than pointers, are returned so they remain valid
+ * even if stringBuffer is later grown or reallocated; recover a segment with
+ * (stringBuffer->_data + offset).
+ */
 Error StringUTF8_Split(const unsigned char* str,
     const unsigned char** delimeters,
     size_t delimeterCount,
     StringSplitOptions splitOptions,
     GenericBuffer* stringBuffer,
-    GenericBuffer* resultPointers,
+    GenericBuffer* resultIndices,
     UnicodeData* unicode);
 
 StringIndexOfOptions String_CreateIndexOptionsNormal(void);
