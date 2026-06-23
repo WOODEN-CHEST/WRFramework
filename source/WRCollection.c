@@ -36,11 +36,11 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
         return CreateNullArgumentError(u8"self");
     }
 
-    CollectionEnumerator* Enumerator = ICollection_GetEnumerator(self);
+    CollectionEnumerator* Enumerator = ICollection_CreateEnumerator(self);
     size_t ElementSize = isByReference ? sizeof(void*) : CollectionEnumerator_GetSingleElementSize(Enumerator);
     if (buffer->_elementSize != ElementSize)
     {
-        CollectionEnumerator_Deconstruct(Enumerator);
+        CollectionEnumerator_Destroy(Enumerator);
         return CreateInvalidArgumentError(u8"buffer", u8"element size mismatch");
     }
     
@@ -51,7 +51,7 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
         void* TargetTail = NULL;
         if (!GenericBuffer_GetWritableTail(buffer, 1, &TargetTail))
         {
-            CollectionEnumerator_Deconstruct(Enumerator);
+            CollectionEnumerator_Destroy(Enumerator);
             return CreateDestinationBufferTooSmallError();
         }
         unsigned char* TargetData = TargetTail;
@@ -72,7 +72,7 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
 
         if (Result.Code != ErrorCode_Success)
         {
-            CollectionEnumerator_Deconstruct(Enumerator);
+            CollectionEnumerator_Destroy(Enumerator);
             return Result;
         }
         GenericBuffer_CommitCount(buffer, 1);
@@ -80,7 +80,7 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
         Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     return Error_CreateSuccess();
 }
 

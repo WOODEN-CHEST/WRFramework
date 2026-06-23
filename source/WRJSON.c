@@ -817,12 +817,18 @@ static void JSONCompoundEntryEnumerator_Deconstruct(void* self)
 
     if (EnumeratorSelf->_inner != NULL)
     {
-        CollectionEnumerator_Deconstruct(EnumeratorSelf->_inner);
+        // The outer enumerator is caller-owned, but it owns its inner enumerator (cold path).
+        CollectionEnumerator_Destroy(EnumeratorSelf->_inner);
     }
-    Memory_Free(EnumeratorSelf);
 }
 
-static CollectionEnumerator* JSONCompound_GetEntryEnumerator(void* self)
+static size_t JSONCompound_GetEntryEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(JSONCompoundEntryEnumerator);
+}
+
+static CollectionEnumerator* JSONCompound_InitEntryEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
@@ -833,26 +839,14 @@ static CollectionEnumerator* JSONCompound_GetEntryEnumerator(void* self)
         ._deconstruct = JSONCompoundEntryEnumerator_Deconstruct,
     };
     JSONCompound* CompoundSelf = self;
-    JSONCompoundEntryEnumerator* Enumerator = NULL;
+    JSONCompoundEntryEnumerator* Enumerator = buffer;
 
-    if (CompoundSelf == NULL)
+    if ((CompoundSelf == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
-    if (Enumerator == NULL)
-    {
-        return NULL;
-    }
-
-    Enumerator->_inner = ICollection_GetEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&CompoundSelf->_elements)));
-    if (Enumerator->_inner == NULL)
-    {
-        Memory_Free(Enumerator);
-        return NULL;
-    }
-
+    Enumerator->_inner = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&CompoundSelf->_elements)));
     Enumerator->Base._singleElementSize = sizeof(JSONCompoundEntry);
     Enumerator->Base._flags = EnumeratorFlags_CanReturnByReference;
     Enumerator->Base._vtable = EnumeratorTemplate;
@@ -937,17 +931,17 @@ static Error JSONArrayIndexedEnumerator_NextByReference(void* self, void** outPo
 
 static void JSONArrayIndexedEnumerator_Deconstruct(void* self)
 {
-    JSONArrayIndexedEnumerator* EnumeratorSelf = self;
-
-    if (EnumeratorSelf == NULL)
-    {
-        return;
-    }
-
-    Memory_Free(EnumeratorSelf);
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
-static CollectionEnumerator* JSONArray_GetIndexedEnumerator(void* self)
+static size_t JSONArray_GetIndexedEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(JSONArrayIndexedEnumerator);
+}
+
+static CollectionEnumerator* JSONArray_InitIndexedEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
@@ -958,15 +952,9 @@ static CollectionEnumerator* JSONArray_GetIndexedEnumerator(void* self)
         ._deconstruct = JSONArrayIndexedEnumerator_Deconstruct,
     };
     JSONArray* ArraySelf = self;
-    JSONArrayIndexedEnumerator* Enumerator = NULL;
+    JSONArrayIndexedEnumerator* Enumerator = buffer;
 
-    if (ArraySelf == NULL)
-    {
-        return NULL;
-    }
-
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
-    if (Enumerator == NULL)
+    if ((ArraySelf == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
@@ -986,7 +974,8 @@ static void InitializeCompoundCollection(JSONCompound* self)
     static const ICollectionVtable EntryCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = JSONCompound_GetEntryEnumerator,
+        ._getEnumeratorSize = JSONCompound_GetEntryEnumeratorSize,
+        ._initEnumerator = JSONCompound_InitEntryEnumerator,
     };
 
     self->_entryCollection._vtable = EntryCollectionTemplate;
@@ -998,7 +987,8 @@ static void InitializeArrayCollection(JSONArray* self)
     static const ICollectionVtable IndexedCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = JSONArray_GetIndexedEnumerator,
+        ._getEnumeratorSize = JSONArray_GetIndexedEnumeratorSize,
+        ._initEnumerator = JSONArray_InitIndexedEnumerator,
     };
 
     self->_indexedCollection._vtable = IndexedCollectionTemplate;
@@ -1802,7 +1792,7 @@ static Error SerializeCompound(JSONCompound* value,
         }
     }
 
-    Enumerator = ICollection_GetEnumerator(JSONCompound_GetEntryCollection(value));
+    Enumerator = ICollection_CreateEnumerator(JSONCompound_GetEntryCollection(value));
     if (Enumerator == NULL)
     {
         return CreateSerializeError(u8"could not enumerate object entries");
@@ -1885,7 +1875,7 @@ static Error SerializeCompound(JSONCompound* value,
         }
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -2216,7 +2206,7 @@ Error JSONCompound_Clear(JSONCompound* self)
         return CreateNullArgumentError(u8"self");
     }
 
-    Enumerator = ICollection_GetEnumerator(IMap_AsValueCollection(HashMap_AsMap(&self->_elements)));
+    Enumerator = ICollection_CreateEnumerator(IMap_AsValueCollection(HashMap_AsMap(&self->_elements)));
     if (Enumerator == NULL)
     {
         return CreateCapacityError(u8"enumerate JSON compound values");
@@ -2242,7 +2232,7 @@ Error JSONCompound_Clear(JSONCompound* self)
         Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;

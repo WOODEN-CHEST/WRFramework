@@ -228,7 +228,7 @@ Error BufferPool_Deconstruct(WRBufferPool* self)
         return Error_CreateSuccess();
     }
 
-    Enumerator = ICollection_GetEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&self->_entries)));
+    Enumerator = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&self->_entries)));
 
     // Best-effort teardown: keep the first error, and deconstruct every later one so its message is
     // not leaked. Error_Deconstruct on a success error is a no-op, so the success path is safe too.
@@ -285,7 +285,7 @@ Error BufferPool_Deconstruct(WRBufferPool* self)
 
     if (Enumerator != NULL)
     {
-        CollectionEnumerator_Deconstruct(Enumerator);
+        CollectionEnumerator_Destroy(Enumerator);
     }
 
     Result = HashMap_Deconstruct(&self->_entries);

@@ -33,7 +33,9 @@ static Error ArrayList_ListGetPointerToElement(void* self, size_t index, void** 
 
 static void ArrayList_ListDeconstruct(void* self);
 
-static CollectionEnumerator* ArrayList_ListGetEnumerator(void* self);
+static size_t ArrayList_ListGetEnumeratorSize(void* self);
+
+static CollectionEnumerator* ArrayList_ListInitEnumerator(void* self, void* buffer);
 
 static Error CreateNullArgumentError(const unsigned char* argumentName)
 {
@@ -140,7 +142,8 @@ static void InitializeInterfaces(ArrayList* self)
     static const ICollectionVtable CollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = ArrayList_ListGetEnumerator,
+        ._getEnumeratorSize = ArrayList_ListGetEnumeratorSize,
+        ._initEnumerator = ArrayList_ListInitEnumerator,
     };
     IListFlags Flags = IListFlags_None;
 
@@ -623,17 +626,17 @@ static Error ArrayListEnumerator_NextByReference(void* self, void** outPointer)
 
 static void ArrayListEnumerator_Deconstruct(void* self)
 {
-    ArrayListEnumerator* EnumeratorSelf = self;
-
-    if (EnumeratorSelf == NULL)
-    {
-        return;
-    }
-
-    Memory_Free(EnumeratorSelf);
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
-static CollectionEnumerator* ArrayList_ListGetEnumerator(void* self)
+static size_t ArrayList_ListGetEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(ArrayListEnumerator);
+}
+
+static CollectionEnumerator* ArrayList_ListInitEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorVTableTemplate =
     {
@@ -644,14 +647,13 @@ static CollectionEnumerator* ArrayList_ListGetEnumerator(void* self)
         ._deconstruct = ArrayListEnumerator_Deconstruct,
     };
     ArrayList* ArrayListSelf = self;
-    ArrayListEnumerator* Enumerator = NULL;
+    ArrayListEnumerator* Enumerator = buffer;
 
-    if (ArrayListSelf == NULL)
+    if ((ArrayListSelf == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
     Enumerator->Base._singleElementSize = IList_GetElementSize(&ArrayListSelf->_list);
     Enumerator->Base._flags = EnumeratorFlags_CanReturnByReference;
     Enumerator->Base._vtable = EnumeratorVTableTemplate;

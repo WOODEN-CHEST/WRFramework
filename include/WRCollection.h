@@ -31,7 +31,8 @@ typedef struct CollectionEnumeratorStruct
 typedef struct ICollectionVTable
 {
     void* Self;
-    CollectionEnumerator* (*_getEnumerator)(void* self);
+    size_t (*_getEnumeratorSize)(void* self);
+    CollectionEnumerator* (*_initEnumerator)(void* self, void* buffer);
 } ICollectionVtable;
 
 typedef struct ICollectionStruct
@@ -41,9 +42,28 @@ typedef struct ICollectionStruct
 
 
 // Functions.
-static inline CollectionEnumerator* ICollection_GetEnumerator(ICollection* self)
+
+/* Enumerators are caller-owned. The preferred form queries the required byte size and constructs the
+ * enumerator into a caller-provided buffer (which may be reused or stack-allocated to avoid per-
+ * iteration allocation). The buffer must be at least ICollection_GetEnumeratorSize(self) bytes and
+ * must outlive the enumerator. CollectionEnumerator_Deconstruct releases any internal resources but
+ * does NOT free the buffer. */
+static inline size_t ICollection_GetEnumeratorSize(ICollection* self)
 {
-    return (*self->_vtable._getEnumerator)(self->_vtable.Self);
+    return (*self->_vtable._getEnumeratorSize)(self->_vtable.Self);
+}
+
+static inline CollectionEnumerator* ICollection_InitEnumerator(ICollection* self, void* buffer)
+{
+    return (*self->_vtable._initEnumerator)(self->_vtable.Self, buffer);
+}
+
+/* Convenience that allocates a correctly-sized enumerator buffer and constructs into it. The caller
+ * must Memory_Free the returned pointer after CollectionEnumerator_Deconstruct. Prefer the caller-
+ * owned form above on hot paths. */
+static inline CollectionEnumerator* ICollection_CreateEnumerator(ICollection* self)
+{
+    return ICollection_InitEnumerator(self, Memory_Allocate(ICollection_GetEnumeratorSize(self)));
 }
 
 Error ICollection_WriteToBufferByValue(ICollection* self, GenericBuffer* buffer);
@@ -77,4 +97,13 @@ static inline bool CollectionEnumerator_IsReferenceReturningSupported(Collection
 static inline void CollectionEnumerator_Deconstruct(CollectionEnumerator* self)
 {
     (*self->_vtable._deconstruct)(self->_vtable.Self);
+}
+
+/* Deconstructs the enumerator and frees its buffer. Use this only for enumerators obtained from
+ * ICollection_CreateEnumerator (which allocated the buffer); for a caller-owned buffer use
+ * CollectionEnumerator_Deconstruct and free/reuse the buffer yourself. */
+static inline void CollectionEnumerator_Destroy(CollectionEnumerator* self)
+{
+    CollectionEnumerator_Deconstruct(self);
+    Memory_Free(self);
 }

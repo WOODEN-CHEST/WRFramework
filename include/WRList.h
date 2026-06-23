@@ -71,9 +71,19 @@ static inline ICollection* IList_AsCollection(IList* self)
     return &self->_collection;
 }
 
-static inline CollectionEnumerator* IList_GetEnumerator(IList* self)
+static inline size_t IList_GetEnumeratorSize(IList* self)
 {
-    return ICollection_GetEnumerator(IList_AsCollection(self));
+    return ICollection_GetEnumeratorSize(IList_AsCollection(self));
+}
+
+static inline CollectionEnumerator* IList_InitEnumerator(IList* self, void* buffer)
+{
+    return ICollection_InitEnumerator(IList_AsCollection(self), buffer);
+}
+
+static inline CollectionEnumerator* IList_CreateEnumerator(IList* self)
+{
+    return ICollection_CreateEnumerator(IList_AsCollection(self));
 }
 
 static inline size_t IList_GetElementCount(IList* self)

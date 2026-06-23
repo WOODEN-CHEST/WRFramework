@@ -64,11 +64,13 @@ static Error HashMap_MapContainsValue(void* self, const void* value, bool* outCo
 
 static Error HashMap_MapDeconstruct(void* self);
 
-static CollectionEnumerator* HashMap_EntryCollectionGetEnumerator(void* self);
+static size_t HashMap_GetEnumeratorSize(void* self);
 
-static CollectionEnumerator* HashMap_KeyCollectionGetEnumerator(void* self);
+static CollectionEnumerator* HashMap_EntryCollectionInitEnumerator(void* self, void* buffer);
 
-static CollectionEnumerator* HashMap_ValueCollectionGetEnumerator(void* self);
+static CollectionEnumerator* HashMap_KeyCollectionInitEnumerator(void* self, void* buffer);
+
+static CollectionEnumerator* HashMap_ValueCollectionInitEnumerator(void* self, void* buffer);
 
 static Error HashMapEnumerator_HasNext(void* self, bool* outHasNext);
 
@@ -599,17 +601,20 @@ static void InitializeInterfaces(HashMap* self)
     static const ICollectionVtable EntryCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = HashMap_EntryCollectionGetEnumerator,
+        ._getEnumeratorSize = HashMap_GetEnumeratorSize,
+        ._initEnumerator = HashMap_EntryCollectionInitEnumerator,
     };
     static const ICollectionVtable KeyCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = HashMap_KeyCollectionGetEnumerator,
+        ._getEnumeratorSize = HashMap_GetEnumeratorSize,
+        ._initEnumerator = HashMap_KeyCollectionInitEnumerator,
     };
     static const ICollectionVtable ValueCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = HashMap_ValueCollectionGetEnumerator,
+        ._getEnumeratorSize = HashMap_GetEnumeratorSize,
+        ._initEnumerator = HashMap_ValueCollectionInitEnumerator,
     };
 
     if (self == NULL)
@@ -979,7 +984,7 @@ static Error HashMap_MapDeconstruct(void* self)
     return HashMap_Deconstruct(self);
 }
 
-static CollectionEnumerator* HashMap_CreateEnumerator(HashMap* self, HashMapCollectionKind kind)
+static CollectionEnumerator* HashMap_InitEnumerator(HashMap* self, HashMapCollectionKind kind, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
@@ -989,14 +994,13 @@ static CollectionEnumerator* HashMap_CreateEnumerator(HashMap* self, HashMapColl
         ._nextByReference = HashMapEnumerator_NextByReference,
         ._deconstruct = HashMapEnumerator_Deconstruct,
     };
-    HashMapEnumerator* Enumerator = NULL;
+    HashMapEnumerator* Enumerator = buffer;
 
-    if (self == NULL)
+    if ((self == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
     Enumerator->Base._singleElementSize = sizeof(MapEntryView);
     if (kind == HashMapCollectionKind_Key)
     {
@@ -1017,19 +1021,25 @@ static CollectionEnumerator* HashMap_CreateEnumerator(HashMap* self, HashMapColl
     return &Enumerator->Base;
 }
 
-static CollectionEnumerator* HashMap_EntryCollectionGetEnumerator(void* self)
+static size_t HashMap_GetEnumeratorSize(void* self)
 {
-    return HashMap_CreateEnumerator(self, HashMapCollectionKind_Entry);
+    (void)self;
+    return sizeof(HashMapEnumerator);
 }
 
-static CollectionEnumerator* HashMap_KeyCollectionGetEnumerator(void* self)
+static CollectionEnumerator* HashMap_EntryCollectionInitEnumerator(void* self, void* buffer)
 {
-    return HashMap_CreateEnumerator(self, HashMapCollectionKind_Key);
+    return HashMap_InitEnumerator(self, HashMapCollectionKind_Entry, buffer);
 }
 
-static CollectionEnumerator* HashMap_ValueCollectionGetEnumerator(void* self)
+static CollectionEnumerator* HashMap_KeyCollectionInitEnumerator(void* self, void* buffer)
 {
-    return HashMap_CreateEnumerator(self, HashMapCollectionKind_Value);
+    return HashMap_InitEnumerator(self, HashMapCollectionKind_Key, buffer);
+}
+
+static CollectionEnumerator* HashMap_ValueCollectionInitEnumerator(void* self, void* buffer)
+{
+    return HashMap_InitEnumerator(self, HashMapCollectionKind_Value, buffer);
 }
 
 static Error HashMapEnumerator_HasNext(void* self, bool* outHasNext)
@@ -1131,14 +1141,8 @@ static Error HashMapEnumerator_NextByReference(void* self, void** outPointer)
 
 static void HashMapEnumerator_Deconstruct(void* self)
 {
-    HashMapEnumerator* EnumeratorSelf = self;
-
-    if (EnumeratorSelf == NULL)
-    {
-        return;
-    }
-
-    Memory_Free(EnumeratorSelf);
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
 
