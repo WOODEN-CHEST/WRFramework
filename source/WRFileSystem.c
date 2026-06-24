@@ -70,14 +70,14 @@ static void CreateGrowableByteBuffer(GenericBuffer* buffer)
         &FileSystemBufferAllocate);
 }
 
-static void CreateGrowablePointerBuffer(GenericBuffer* buffer)
+static void CreateGrowableIndexBuffer(GenericBuffer* buffer)
 {
-    unsigned char** Data = Memory_Allocate(sizeof(*Data) * FILE_SYSTEM_TEMP_BUFFER_INITIAL_CAPACITY);
+    size_t* Data = Memory_Allocate(sizeof(*Data) * FILE_SYSTEM_TEMP_BUFFER_INITIAL_CAPACITY);
 
     GenericBuffer_CreateVariable(buffer,
         Data,
         FILE_SYSTEM_TEMP_BUFFER_INITIAL_CAPACITY,
-        sizeof(unsigned char*),
+        sizeof(size_t),
         0,
         NULL,
         &FileSystemBufferAllocate);
@@ -755,10 +755,10 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
 {
     GenericBuffer PrefixPathBuffer;
     GenericBuffer SegmentStringBuffer;
-    GenericBuffer SegmentPointerBuffer;
+    GenericBuffer SegmentIndexBuffer;
     GenericBuffer RootBuffer;
     const unsigned char* RootString = NULL;
-    unsigned char** Segments = NULL;
+    size_t* SegmentOffsets = NULL;
     size_t SegmentCount = 0;
     Error Result = Error_CreateSuccess();
 
@@ -770,7 +770,7 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
 
     CreateGrowableByteBuffer(&PrefixPathBuffer);
     CreateGrowableByteBuffer(&SegmentStringBuffer);
-    CreateGrowablePointerBuffer(&SegmentPointerBuffer);
+    CreateGrowableIndexBuffer(&SegmentIndexBuffer);
     CreateGrowableByteBuffer(&RootBuffer);
 
     Result = Path_GetRoot(path, &RootBuffer);
@@ -778,23 +778,23 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
     {
         Memory_Free(PrefixPathBuffer._data);
         Memory_Free(SegmentStringBuffer._data);
-        Memory_Free(SegmentPointerBuffer._data);
+        Memory_Free(SegmentIndexBuffer._data);
         Memory_Free(RootBuffer._data);
         return Result;
     }
-    Result = Path_Split(path, &SegmentStringBuffer, &SegmentPointerBuffer);
+    Result = Path_Split(path, &SegmentStringBuffer, &SegmentIndexBuffer);
     if (Result.Code != ErrorCode_Success)
     {
         Memory_Free(PrefixPathBuffer._data);
         Memory_Free(SegmentStringBuffer._data);
-        Memory_Free(SegmentPointerBuffer._data);
+        Memory_Free(SegmentIndexBuffer._data);
         Memory_Free(RootBuffer._data);
         return Result;
     }
 
     RootString = (const unsigned char*)RootBuffer._data;
-    Segments = (unsigned char**)SegmentPointerBuffer._data;
-    SegmentCount = SegmentPointerBuffer._count;
+    SegmentOffsets = (size_t*)SegmentIndexBuffer._data;
+    SegmentCount = SegmentIndexBuffer._count;
 
     if ((RootBuffer._count > 1) && (RootString[0] != 0))
     {
@@ -803,7 +803,7 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
         {
             Memory_Free(PrefixPathBuffer._data);
             Memory_Free(SegmentStringBuffer._data);
-            Memory_Free(SegmentPointerBuffer._data);
+            Memory_Free(SegmentIndexBuffer._data);
             Memory_Free(RootBuffer._data);
             return Result;
         }
@@ -811,12 +811,14 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
 
     for (size_t Index = 0; Index < SegmentCount; Index++)
     {
-        Result = Path_Append((const unsigned char*)PrefixPathBuffer._data, Segments[Index], &PrefixPathBuffer);
+        Result = Path_Append((const unsigned char*)PrefixPathBuffer._data,
+            (const unsigned char*)SegmentStringBuffer._data + SegmentOffsets[Index],
+            &PrefixPathBuffer);
         if (Result.Code != ErrorCode_Success)
         {
             Memory_Free(PrefixPathBuffer._data);
             Memory_Free(SegmentStringBuffer._data);
-            Memory_Free(SegmentPointerBuffer._data);
+            Memory_Free(SegmentIndexBuffer._data);
             Memory_Free(RootBuffer._data);
             return Result;
         }
@@ -830,7 +832,7 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
         {
             Memory_Free(PrefixPathBuffer._data);
             Memory_Free(SegmentStringBuffer._data);
-            Memory_Free(SegmentPointerBuffer._data);
+            Memory_Free(SegmentIndexBuffer._data);
             Memory_Free(RootBuffer._data);
             return Result;
         }
@@ -838,7 +840,7 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
 
     Memory_Free(PrefixPathBuffer._data);
     Memory_Free(SegmentStringBuffer._data);
-    Memory_Free(SegmentPointerBuffer._data);
+    Memory_Free(SegmentIndexBuffer._data);
     Memory_Free(RootBuffer._data);
     return Error_CreateSuccess();
 }

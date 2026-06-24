@@ -116,10 +116,10 @@ static Error CreateBufferTypeError(const unsigned char* argumentName, size_t ele
         elementSize);
 }
 
-static Error CreatePointerBufferTypeError(const unsigned char* argumentName, size_t elementSize)
+static Error CreateIndexBufferTypeError(const unsigned char* argumentName, size_t elementSize)
 {
     return Error_Construct3(ErrorCode_IllegalArgument,
-        u8"Path argument \"%s\" must be a pointer buffer, got element size %zu.",
+        u8"Path argument \"%s\" must be a size_t index buffer, got element size %zu.",
         argumentName,
         elementSize);
 }
@@ -175,15 +175,15 @@ static Error ValidateByteBuffer(GenericBuffer* buffer, const unsigned char* argu
     return Error_CreateSuccess();
 }
 
-static Error ValidatePointerBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
+static Error ValidateIndexBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
 {
     if (buffer == NULL)
     {
         return CreateNullArgumentError(argumentName);
     }
-    if (buffer->_elementSize != sizeof(unsigned char*))
+    if (buffer->_elementSize != sizeof(size_t))
     {
-        return CreatePointerBufferTypeError(argumentName, buffer->_elementSize);
+        return CreateIndexBufferTypeError(argumentName, buffer->_elementSize);
     }
 
     return Error_CreateSuccess();
@@ -1147,23 +1147,21 @@ static Error MeasureSplitRequirements(const unsigned char* path,
     return Error_CreateSuccess();
 }
 
-static Error EnsureSplitBufferCapacity(GenericBuffer* strBuffer, GenericBuffer* segmentPtrBuffer, size_t segmentCount, size_t totalStringBytes)
+static Error EnsureSplitBufferCapacity(GenericBuffer* strBuffer, GenericBuffer* segmentIndexBuffer, size_t segmentCount, size_t totalStringBytes)
 {
-    Error Result = EnsureByteBufferCapacity(strBuffer, totalStringBytes, u8"split the path");
-    size_t AddedSegmentCount = 0;
-
-    if (Result.Code != ErrorCode_Success)
-    {
-        return Result;
-    }
-    if (segmentCount > segmentPtrBuffer->_count)
-    {
-        AddedSegmentCount = segmentCount - segmentPtrBuffer->_count;
-    }
-    if (!GenericBuffer_TryPrepareForManualMutation(segmentPtrBuffer, AddedSegmentCount))
+    // Split appends to the destinations, so reserve room for the new data on top of any existing
+    // contents. TryPrepareForManualMutation reserves relative to the current count and reports
+    // failure (including on size_t overflow) by returning false.
+    if (!GenericBuffer_TryPrepareForManualMutation(strBuffer, totalStringBytes))
     {
         return Error_Construct3(ErrorCode_BufferTooSmall,
-            u8"Cannot split the path because the segment pointer buffer requires at least %zu elements of capacity.",
+            u8"Cannot split the path because the destination buffer requires at least %zu additional bytes of capacity.",
+            totalStringBytes);
+    }
+    if (!GenericBuffer_TryPrepareForManualMutation(segmentIndexBuffer, segmentCount))
+    {
+        return Error_Construct3(ErrorCode_BufferTooSmall,
+            u8"Cannot split the path because the segment index buffer requires at least %zu additional elements of capacity.",
             segmentCount);
     }
 
@@ -1173,16 +1171,17 @@ static Error EnsureSplitBufferCapacity(GenericBuffer* strBuffer, GenericBuffer* 
 static void WriteSplitBuffers(const unsigned char* path,
     size_t startIndex,
     GenericBuffer* strBuffer,
-    GenericBuffer* segmentPtrBuffer)
+    GenericBuffer* segmentIndexBuffer)
 {
     size_t Index = startIndex;
-    size_t StringWriteIndex = 0;
-    size_t PointerWriteIndex = 0;
+    size_t StringWriteIndex = strBuffer->_count;
+    size_t IndexWriteIndex = segmentIndexBuffer->_count;
     PathSegmentView Segment;
 
     while (TryGetNextSegmentView(path, &Index, &Segment))
     {
-        unsigned char* SegmentText = strBuffer->_data + StringWriteIndex;
+        size_t SegmentOffset = StringWriteIndex;
+        unsigned char* SegmentText = strBuffer->_data + SegmentOffset;
 
         if (Segment.Length > 0)
         {
@@ -1191,11 +1190,11 @@ static void WriteSplitBuffers(const unsigned char* path,
 
         SegmentText[Segment.Length] = 0;
         StringWriteIndex += Segment.Length + 1;
-        ((unsigned char**)segmentPtrBuffer->_data)[PointerWriteIndex++] = SegmentText;
+        ((size_t*)segmentIndexBuffer->_data)[IndexWriteIndex++] = SegmentOffset;
     }
 
-    strBuffer->_count = StringWriteIndex;
-    segmentPtrBuffer->_count = PointerWriteIndex;
+    GenericBuffer_SetCount(strBuffer, StringWriteIndex);
+    GenericBuffer_SetCount(segmentIndexBuffer, IndexWriteIndex);
 }
 
 
@@ -1273,18 +1272,20 @@ Error Path_ChangeExtension(const unsigned char* path, const unsigned char* newEx
         Memory_Copy(path, result->_data, PrefixLength);
     }
 
-    result->_count = PrefixLength;
+    GenericBuffer_SetCount(result, PrefixLength);
     if (NeedsDot)
     {
-        result->_data[result->_count++] = u8'.';
+        result->_data[result->_count] = u8'.';
+        GenericBuffer_CommitCount(result, 1);
     }
     if (NewExtensionLength > 0)
     {
         Memory_Copy(newExtension, result->_data + result->_count, NewExtensionLength);
-        result->_count += NewExtensionLength;
+        GenericBuffer_CommitCount(result, NewExtensionLength);
     }
 
-    result->_data[result->_count++] = 0;
+    result->_data[result->_count] = 0;
+    GenericBuffer_CommitCount(result, 1);
     return Error_CreateSuccess();
 }
 
@@ -1388,7 +1389,7 @@ Error Path_Combine(const unsigned char** paths, size_t pathCount, GenericBuffer*
         return Result;
     }
 
-    result->_count = WriteCombinedPath(paths, pathCount, result->_data) + 1;
+    GenericBuffer_SetCount(result, WriteCombinedPath(paths, pathCount, result->_data) + 1);
     return Error_CreateSuccess();
 }
 
@@ -1795,9 +1796,11 @@ Error Path_EnsureTrailingSeparator(const unsigned char* path, GenericBuffer* res
     }
 
     Memory_Copy(path, result->_data, Length);
-    result->_count = Length;
-    result->_data[result->_count++] = ENVIRONMENT_PATH_SEPARATOR_PRIMARY;
-    result->_data[result->_count++] = 0;
+    GenericBuffer_SetCount(result, Length);
+    result->_data[result->_count] = ENVIRONMENT_PATH_SEPARATOR_PRIMARY;
+    GenericBuffer_CommitCount(result, 1);
+    result->_data[result->_count] = 0;
+    GenericBuffer_CommitCount(result, 1);
     return Error_CreateSuccess();
 }
 
@@ -1843,7 +1846,7 @@ bool Path_ContainsDirectorySegments(const unsigned char* path)
     return false;
 }
 
-Error Path_Split(const unsigned char* path, GenericBuffer* strBuffer, GenericBuffer* segmentPtrBuffer)
+Error Path_Split(const unsigned char* path, GenericBuffer* strBuffer, GenericBuffer* segmentIndexBuffer)
 {
     PathRootInfo RootInfo;
     size_t SegmentCount = 0;
@@ -1860,7 +1863,7 @@ Error Path_Split(const unsigned char* path, GenericBuffer* strBuffer, GenericBuf
     {
         return Result;
     }
-    Result = ValidatePointerBuffer(segmentPtrBuffer, u8"segmentPtrBuffer");
+    Result = ValidateIndexBuffer(segmentIndexBuffer, u8"segmentIndexBuffer");
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -1878,11 +1881,11 @@ Error Path_Split(const unsigned char* path, GenericBuffer* strBuffer, GenericBuf
         return Result;
     }
 
-    Result = EnsureSplitBufferCapacity(strBuffer, segmentPtrBuffer, SegmentCount, TotalStringBytes);
+    Result = EnsureSplitBufferCapacity(strBuffer, segmentIndexBuffer, SegmentCount, TotalStringBytes);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
     }
-    WriteSplitBuffers(path, RootInfo.Length, strBuffer, segmentPtrBuffer);
+    WriteSplitBuffers(path, RootInfo.Length, strBuffer, segmentIndexBuffer);
     return Error_CreateSuccess();
 }

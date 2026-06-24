@@ -64,11 +64,13 @@ static Error HashMap_MapContainsValue(void* self, const void* value, bool* outCo
 
 static Error HashMap_MapDeconstruct(void* self);
 
-static CollectionEnumerator* HashMap_EntryCollectionGetEnumerator(void* self);
+static size_t HashMap_GetEnumeratorSize(void* self);
 
-static CollectionEnumerator* HashMap_KeyCollectionGetEnumerator(void* self);
+static CollectionEnumerator* HashMap_EntryCollectionInitEnumerator(void* self, void* buffer);
 
-static CollectionEnumerator* HashMap_ValueCollectionGetEnumerator(void* self);
+static CollectionEnumerator* HashMap_KeyCollectionInitEnumerator(void* self, void* buffer);
+
+static CollectionEnumerator* HashMap_ValueCollectionInitEnumerator(void* self, void* buffer);
 
 static Error HashMapEnumerator_HasNext(void* self, bool* outHasNext);
 
@@ -151,13 +153,7 @@ static void InitializeEmptyBuffer(GenericBuffer* buffer)
         return;
     }
 
-    buffer->_data = NULL;
-    buffer->_capacity = 0;
-    buffer->_count = 0;
-    buffer->_elementSize = sizeof(unsigned char);
-    buffer->_userData = NULL;
-    buffer->_requestMoreSpaceCallback = NULL;
-    buffer->_flags = GenericBufferFlags_None;
+    GenericBuffer_CreateVariable(buffer, NULL, 0, sizeof(unsigned char), 0, NULL, NULL);
 }
 
 static bool HashMap_HasStorage(HashMap* self)
@@ -266,7 +262,7 @@ static bool HashMap_KeysAreEqual(HashMap* self, const void* storedKey, const voi
     return self->_keyComparator(HashMap_AsMap(self),
         storedKey,
         requestedKey,
-        self->_keyComparatorUserData);
+        &self->_keyComparatorUserData);
 }
 
 static bool HashMap_ValuesAreEqual(HashMap* self, const void* storedValue, const void* requestedValue)
@@ -274,7 +270,7 @@ static bool HashMap_ValuesAreEqual(HashMap* self, const void* storedValue, const
     return self->_valueComparator(HashMap_AsMap(self),
         storedValue,
         requestedValue,
-        self->_valueComparatorUserData);
+        &self->_valueComparatorUserData);
 }
 
 static bool HashMap_IsBucketOccupied(HashMapBucketMetadata bucket)
@@ -476,13 +472,7 @@ static Error HashMap_CalculateGrowthCapacity(HashMap* self, size_t minimumLiveEn
 
 static void HashMap_AdoptStorage(HashMap* self, unsigned char* storage, size_t capacity, size_t byteCount)
 {
-    self->_dataBuffer._data = storage;
-    self->_dataBuffer._capacity = byteCount;
-    self->_dataBuffer._count = byteCount;
-    self->_dataBuffer._elementSize = sizeof(unsigned char);
-    self->_dataBuffer._userData = NULL;
-    self->_dataBuffer._requestMoreSpaceCallback = NULL;
-    self->_dataBuffer._flags = GenericBufferFlags_None;
+    GenericBuffer_CreateVariable(&self->_dataBuffer, storage, byteCount, sizeof(unsigned char), byteCount, NULL, NULL);
     self->_capacity = capacity;
     self->_isActiveBufferOwned = (storage != NULL);
 }
@@ -611,17 +601,20 @@ static void InitializeInterfaces(HashMap* self)
     static const ICollectionVtable EntryCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = HashMap_EntryCollectionGetEnumerator,
+        ._getEnumeratorSize = HashMap_GetEnumeratorSize,
+        ._initEnumerator = HashMap_EntryCollectionInitEnumerator,
     };
     static const ICollectionVtable KeyCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = HashMap_KeyCollectionGetEnumerator,
+        ._getEnumeratorSize = HashMap_GetEnumeratorSize,
+        ._initEnumerator = HashMap_KeyCollectionInitEnumerator,
     };
     static const ICollectionVtable ValueCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = HashMap_ValueCollectionGetEnumerator,
+        ._getEnumeratorSize = HashMap_GetEnumeratorSize,
+        ._initEnumerator = HashMap_ValueCollectionInitEnumerator,
     };
 
     if (self == NULL)
@@ -650,11 +643,11 @@ static void InitializeEmptyHashMap(HashMap* self)
     self->_map._keySize = 0;
     self->_map._valueSize = 0;
     self->_keyHashFunction = NULL;
-    self->_keyHashFunctionUserData = NULL;
+    self->_keyHashFunctionUserData = UserData_CreateEmpty();
     self->_keyComparator = MapKeyComparator_Default;
-    self->_keyComparatorUserData = NULL;
+    self->_keyComparatorUserData = UserData_CreateEmpty();
     self->_valueComparator = MapValueComparator_Default;
-    self->_valueComparatorUserData = NULL;
+    self->_valueComparatorUserData = UserData_CreateEmpty();
     InitializeEmptyBuffer(&self->_dataBuffer);
     self->_isActiveBufferOwned = false;
     self->_entryCount = 0;
@@ -749,7 +742,7 @@ static Error HashMap_MapGetElement(void* self, const void* key, void* outValue)
         return CreateKeyNotFoundError();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.WasFound)
     {
@@ -784,7 +777,7 @@ static Error HashMap_MapGetPointerToElement(void* self, const void* key, void** 
         return CreateKeyNotFoundError();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.WasFound)
     {
@@ -821,7 +814,7 @@ static Error HashMap_MapAdd(void* self, const void* key, const void* value, bool
         return Result;
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.CanInsert)
     {
@@ -877,7 +870,7 @@ static Error HashMap_MapRemove(void* self, const void* key, bool* outWasRemoved)
         return Error_CreateSuccess();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     if (!SlotResult.WasFound)
     {
@@ -944,7 +937,7 @@ static Error HashMap_MapContainsKey(void* self, const void* key, bool* outContai
         return Error_CreateSuccess();
     }
 
-    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, HashMapSelf->_keyHashFunctionUserData);
+    Hash = HashMapSelf->_keyHashFunction(HashMap_AsMap(HashMapSelf), key, &HashMapSelf->_keyHashFunctionUserData);
     SlotResult = HashMap_FindSlot(HashMapSelf, Hash, key);
     *outContainsKey = SlotResult.WasFound;
     return Error_CreateSuccess();
@@ -991,7 +984,7 @@ static Error HashMap_MapDeconstruct(void* self)
     return HashMap_Deconstruct(self);
 }
 
-static CollectionEnumerator* HashMap_CreateEnumerator(HashMap* self, HashMapCollectionKind kind)
+static CollectionEnumerator* HashMap_InitEnumerator(HashMap* self, HashMapCollectionKind kind, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
@@ -1001,14 +994,13 @@ static CollectionEnumerator* HashMap_CreateEnumerator(HashMap* self, HashMapColl
         ._nextByReference = HashMapEnumerator_NextByReference,
         ._deconstruct = HashMapEnumerator_Deconstruct,
     };
-    HashMapEnumerator* Enumerator = NULL;
+    HashMapEnumerator* Enumerator = buffer;
 
-    if (self == NULL)
+    if ((self == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
     Enumerator->Base._singleElementSize = sizeof(MapEntryView);
     if (kind == HashMapCollectionKind_Key)
     {
@@ -1029,19 +1021,25 @@ static CollectionEnumerator* HashMap_CreateEnumerator(HashMap* self, HashMapColl
     return &Enumerator->Base;
 }
 
-static CollectionEnumerator* HashMap_EntryCollectionGetEnumerator(void* self)
+static size_t HashMap_GetEnumeratorSize(void* self)
 {
-    return HashMap_CreateEnumerator(self, HashMapCollectionKind_Entry);
+    (void)self;
+    return sizeof(HashMapEnumerator);
 }
 
-static CollectionEnumerator* HashMap_KeyCollectionGetEnumerator(void* self)
+static CollectionEnumerator* HashMap_EntryCollectionInitEnumerator(void* self, void* buffer)
 {
-    return HashMap_CreateEnumerator(self, HashMapCollectionKind_Key);
+    return HashMap_InitEnumerator(self, HashMapCollectionKind_Entry, buffer);
 }
 
-static CollectionEnumerator* HashMap_ValueCollectionGetEnumerator(void* self)
+static CollectionEnumerator* HashMap_KeyCollectionInitEnumerator(void* self, void* buffer)
 {
-    return HashMap_CreateEnumerator(self, HashMapCollectionKind_Value);
+    return HashMap_InitEnumerator(self, HashMapCollectionKind_Key, buffer);
+}
+
+static CollectionEnumerator* HashMap_ValueCollectionInitEnumerator(void* self, void* buffer)
+{
+    return HashMap_InitEnumerator(self, HashMapCollectionKind_Value, buffer);
 }
 
 static Error HashMapEnumerator_HasNext(void* self, bool* outHasNext)
@@ -1143,14 +1141,8 @@ static Error HashMapEnumerator_NextByReference(void* self, void** outPointer)
 
 static void HashMapEnumerator_Deconstruct(void* self)
 {
-    HashMapEnumerator* EnumeratorSelf = self;
-
-    if (EnumeratorSelf == NULL)
-    {
-        return;
-    }
-
-    Memory_Free(EnumeratorSelf);
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
 

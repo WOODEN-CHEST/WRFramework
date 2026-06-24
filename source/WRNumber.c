@@ -579,15 +579,17 @@ static Error AppendFormattedDouble(double value, GenericBuffer* buffer, DecimalF
     }
 
     RequiredSize = (size_t)RequiredCharacterCount;
-    if (!GenericBuffer_TryPrepareForManualMutation(buffer, RequiredSize + 1U))
+
+    void* WriteTail = NULL;
+    if (!GenericBuffer_GetWritableTail(buffer, RequiredSize + 1U, &WriteTail))
     {
         return CreateDecimalBufferError();
     }
 
-    WriteStart = buffer->_data + buffer->_count;
-    snprintf((char*)WriteStart, buffer->_capacity - buffer->_count, Format, value);
+    WriteStart = WriteTail;
+    snprintf((char*)WriteStart, GenericBuffer_GetCapacityRemaining(buffer), Format, value);
     ReplaceDecimalSeparator(WriteStart, RequiredSize, options._separator);
-    buffer->_count += RequiredSize;
+    GenericBuffer_CommitCount(buffer, RequiredSize);
 
     if (!GenericBuffer_NullTerminate(buffer))
     {

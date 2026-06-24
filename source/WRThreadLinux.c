@@ -39,7 +39,7 @@ static Error CreateRangeError(const unsigned char* operationName)
 static void* ThreadStartRoutine(void* userdata)
 {
     Thread* ThreadValue = userdata;
-    void* Result = ThreadValue->_entryFunction(ThreadValue->_userdata);
+    void* Result = ThreadValue->_entryFunction(&ThreadValue->_userdata);
 
     ThreadValue->_result = Result;
     atomic_store(&ThreadValue->_hasCompleted, true);

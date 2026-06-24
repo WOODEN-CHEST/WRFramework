@@ -28,10 +28,10 @@ static Error CreateAlreadyJoinedError(void)
         u8"The thread has already been joined.");
 }
 
-static void InitializeThreadCommon(Thread* self, ThreadFunc entryFunction, void* userdata)
+static void InitializeThreadCommon(Thread* self, ThreadFunc entryFunction, const UserData* userdata)
 {
     self->_entryFunction = entryFunction;
-    self->_userdata = userdata;
+    self->_userdata = (userdata != NULL) ? *userdata : UserData_CreateEmpty();
     self->_result = NULL;
     atomic_init(&self->_hasCompleted, false);
     self->_isJoinable = false;
@@ -48,7 +48,7 @@ static void InitializeThreadCommon(Thread* self, ThreadFunc entryFunction, void*
 
 
 // Public functions.
-Error Thread_Create(Thread** outThread, ThreadFunc entryFunction, void* userdata)
+Error Thread_Create(Thread** outThread, ThreadFunc entryFunction, const UserData* userdata)
 {
     Thread* ThreadValue = NULL;
     Error Result = Error_CreateSuccess();

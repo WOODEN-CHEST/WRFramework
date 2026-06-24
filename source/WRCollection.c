@@ -36,11 +36,11 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
         return CreateNullArgumentError(u8"self");
     }
 
-    CollectionEnumerator* Enumerator = ICollection_GetEnumerator(self);
+    CollectionEnumerator* Enumerator = ICollection_CreateEnumerator(self);
     size_t ElementSize = isByReference ? sizeof(void*) : CollectionEnumerator_GetSingleElementSize(Enumerator);
     if (buffer->_elementSize != ElementSize)
     {
-        CollectionEnumerator_Deconstruct(Enumerator);
+        CollectionEnumerator_Destroy(Enumerator);
         return CreateInvalidArgumentError(u8"buffer", u8"element size mismatch");
     }
     
@@ -48,13 +48,14 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
     Error Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     while (HasNext && (Result.Code == ErrorCode_Success))
     {
-        if (!GenericBuffer_TryPrepareForManualMutation(buffer, 1))
+        void* TargetTail = NULL;
+        if (!GenericBuffer_GetWritableTail(buffer, 1, &TargetTail))
         {
-            CollectionEnumerator_Deconstruct(Enumerator);
+            CollectionEnumerator_Destroy(Enumerator);
             return CreateDestinationBufferTooSmallError();
         }
-        unsigned char* TargetData = buffer->_data + (buffer->_count * buffer->_elementSize);
-        
+        unsigned char* TargetData = TargetTail;
+
         if (isByReference)
         {
             void* TargetPointer = NULL;
@@ -71,15 +72,15 @@ static Error WriteToBuffer(ICollection* self, GenericBuffer* buffer, bool isByRe
 
         if (Result.Code != ErrorCode_Success)
         {
-            CollectionEnumerator_Deconstruct(Enumerator);
+            CollectionEnumerator_Destroy(Enumerator);
             return Result;
         }
-        buffer->_count += 1;
+        GenericBuffer_CommitCount(buffer, 1);
 
         Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     return Error_CreateSuccess();
 }
 

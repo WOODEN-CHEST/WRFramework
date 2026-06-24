@@ -11,7 +11,7 @@ typedef struct ListSortContextStruct
 {
     IList* List;
     IListComparator Comparator;
-    void* UserData;
+    const UserData* UserData;
     int Direction;
     unsigned char* ElementBufferA;
     unsigned char* ElementBufferB;
@@ -311,11 +311,12 @@ static Error QuickSortList(ListSortContext* context, size_t lowIndex, size_t hig
     return Error_CreateSuccess();
 }
 
-static Error SortInternal(IList* self, IListComparator comparator, void* userData, int direction)
+static Error SortInternal(IList* self, IListComparator comparator, const UserData* userData, int direction, void* scratch)
 {
     size_t ElementSize = 0;
     size_t ElementCount = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     ListSortContext Context;
     Error Result = Error_CreateSuccess();
 
@@ -336,7 +337,8 @@ static Error SortInternal(IList* self, IListComparator comparator, void* userDat
     }
 
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize * 2);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize * 2);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     Context = (ListSortContext)
     {
         .List = self,
@@ -347,7 +349,7 @@ static Error SortInternal(IList* self, IListComparator comparator, void* userDat
         .ElementBufferB = ScratchBuffer + ElementSize,
     };
     Result = QuickSortList(&Context, 0, ElementCount - 1);
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     return Result;
 }
 
@@ -575,22 +577,33 @@ Error IList_GetLast(IList* self, void* outElement)
     return IList_GetElement(self, ElementCount - 1, outElement);
 }
 
-Error IList_SortAscending(IList* self, IListComparator comparator, void* userData)
+Error IList_SortAscending(IList* self, IListComparator comparator, const UserData* userData, void* scratch)
 {
-    return SortInternal(self, comparator, userData, LIST_SORT_ASCENDING);
+    return SortInternal(self, comparator, userData, LIST_SORT_ASCENDING, scratch);
 }
 
-Error IList_SortDescending(IList* self, IListComparator comparator, void* userData)
+Error IList_SortAscendingAllocating(IList* self, IListComparator comparator, const UserData* userData)
 {
-    return SortInternal(self, comparator, userData, LIST_SORT_DESCENDING);
+    return SortInternal(self, comparator, userData, LIST_SORT_ASCENDING, NULL);
 }
 
-Error IList_Filter(IList* self, IListPredicate predicate, void* userData)
+Error IList_SortDescending(IList* self, IListComparator comparator, const UserData* userData, void* scratch)
+{
+    return SortInternal(self, comparator, userData, LIST_SORT_DESCENDING, scratch);
+}
+
+Error IList_SortDescendingAllocating(IList* self, IListComparator comparator, const UserData* userData)
+{
+    return SortInternal(self, comparator, userData, LIST_SORT_DESCENDING, NULL);
+}
+
+Error IList_Filter(IList* self, IListPredicate predicate, const UserData* userData, void* scratch)
 {
     size_t ElementCount = 0;
     size_t WriteIndex = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateWritableList(self);
 
     if (Result.Code != ErrorCode_Success)
@@ -604,7 +617,8 @@ Error IList_Filter(IList* self, IListPredicate predicate, void* userData)
 
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
 
     for (size_t ReadIndex = 0; ReadIndex < ElementCount; ReadIndex++)
     {
@@ -614,7 +628,7 @@ Error IList_Filter(IList* self, IListPredicate predicate, void* userData)
         Result = GetElementPointerOrCopy(self, ReadIndex, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -632,7 +646,7 @@ Error IList_Filter(IList* self, IListPredicate predicate, void* userData)
             Result = IList_Replace(self, WriteIndex, ElementPointer);
             if (Result.Code != ErrorCode_Success)
             {
-                Memory_Free(ScratchBuffer);
+                Memory_Free(OwnedScratch);
                 return Result;
             }
         }
@@ -640,7 +654,7 @@ Error IList_Filter(IList* self, IListPredicate predicate, void* userData)
         WriteIndex++;
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     if (WriteIndex == ElementCount)
     {
         return Error_CreateSuccess();
@@ -649,12 +663,13 @@ Error IList_Filter(IList* self, IListPredicate predicate, void* userData)
     return IList_RemoveRange(self, WriteIndex, ElementCount - WriteIndex);
 }
 
-Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, void* userData)
+Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, const UserData* userData, void* scratch)
 {
     size_t SourceCount = 0;
     size_t DestinationStartIndex = 0;
     unsigned char* DestinationWritePointer = NULL;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     size_t ElementSize = 0;
     Error Result = ValidateList(self);
 
@@ -674,10 +689,11 @@ Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, voi
     SourceCount = IList_GetElementCount(self);
     DestinationStartIndex = destination->_count;
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     if (!GenericBuffer_TryPrepareForManualMutation(destination, SourceCount))
     {
-        Memory_Free(ScratchBuffer);
+        Memory_Free(OwnedScratch);
         return Error_Construct1(ErrorCode_InvalidOperation,
             u8"Could not prepare the destination buffer for mapped elements.");
     }
@@ -691,7 +707,7 @@ Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, voi
         Result = GetElementPointerOrCopy(self, Index, &SourcePointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -704,17 +720,18 @@ Error IList_Map(IList* self, GenericBuffer* destination, IListMapper mapper, voi
         DestinationWritePointer += destination->_elementSize;
     }
 
-    Memory_Free(ScratchBuffer);
-    destination->_count = DestinationStartIndex + SourceCount;
+    Memory_Free(OwnedScratch);
+    GenericBuffer_SetCount(destination, DestinationStartIndex + SourceCount);
     return Error_CreateSuccess();
 }
 
-Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue)
+Error IList_SumInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch)
 {
     int64_t Sum = 0;
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
     if (Result.Code != ErrorCode_Success)
@@ -728,7 +745,8 @@ Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int
 
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
 
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
@@ -738,7 +756,7 @@ Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -750,17 +768,18 @@ Error IList_SumInt(IList* self, IListIntExtractor extractor, void* userData, int
         Sum += extractor(self, ElementData, userData);
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = Sum;
     return Error_CreateSuccess();
 }
 
-Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue)
+Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch)
 {
     double Sum = 0.0;
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
     if (Result.Code != ErrorCode_Success)
@@ -774,7 +793,8 @@ Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userDat
 
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
 
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
@@ -784,7 +804,7 @@ Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userDat
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -796,16 +816,17 @@ Error IList_SumDouble(IList* self, IListDoubleExtractor extractor, void* userDat
         Sum += extractor(self, ElementData, userData);
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = Sum;
     return Error_CreateSuccess();
 }
 
-Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue)
+Error IList_MaxInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     int64_t MaxValue = 0;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
@@ -825,7 +846,8 @@ Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int
     }
 
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -835,7 +857,7 @@ Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -851,16 +873,17 @@ Error IList_MaxInt(IList* self, IListIntExtractor extractor, void* userData, int
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = MaxValue;
     return Error_CreateSuccess();
 }
 
-Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue)
+Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     double MaxValue = 0.0;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
@@ -880,7 +903,8 @@ Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userDat
     }
 
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -890,7 +914,7 @@ Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userDat
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -906,16 +930,17 @@ Error IList_MaxDouble(IList* self, IListDoubleExtractor extractor, void* userDat
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = MaxValue;
     return Error_CreateSuccess();
 }
 
-Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int64_t* outValue)
+Error IList_MinInt(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     int64_t MinValue = 0;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
@@ -935,7 +960,8 @@ Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int
     }
 
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -945,7 +971,7 @@ Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -961,16 +987,17 @@ Error IList_MinInt(IList* self, IListIntExtractor extractor, void* userData, int
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = MinValue;
     return Error_CreateSuccess();
 }
 
-Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userData, double* outValue)
+Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     double MinValue = 0.0;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
@@ -990,7 +1017,8 @@ Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userDat
     }
 
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -1000,7 +1028,7 @@ Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userDat
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -1016,17 +1044,18 @@ Error IList_MinDouble(IList* self, IListDoubleExtractor extractor, void* userDat
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = MinValue;
     return Error_CreateSuccess();
 }
 
-Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool* outValue)
+Error IList_Contains(IList* self, IListPredicate predicate, const UserData* userData, bool* outValue, void* scratch)
 {
     size_t Index = 0;
     size_t ElementSize = 0;
     size_t ElementCount = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
     if (Result.Code != ErrorCode_Success)
@@ -1041,7 +1070,8 @@ Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool
     *outValue = false;
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -1050,7 +1080,7 @@ Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -1066,16 +1096,17 @@ Error IList_Contains(IList* self, IListPredicate predicate, void* userData, bool
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     return Error_CreateSuccess();
 }
 
-Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, size_t* outValue)
+Error IList_CountWhere(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch)
 {
     size_t Count = 0;
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
     if (Result.Code != ErrorCode_Success)
@@ -1089,7 +1120,8 @@ Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, si
 
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -1098,7 +1130,7 @@ Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, si
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -1113,16 +1145,17 @@ Error IList_CountWhere(IList* self, IListPredicate predicate, void* userData, si
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     *outValue = Count;
     return Error_CreateSuccess();
 }
 
-Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue)
+Error IList_FirstIndexOf(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
     if (Result.Code != ErrorCode_Success)
@@ -1137,7 +1170,8 @@ Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, 
     *outValue = LIST_INDEX_INVALID;
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < ElementCount; Index++)
     {
         void* ElementPointer = NULL;
@@ -1146,7 +1180,7 @@ Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, 
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -1162,15 +1196,16 @@ Error IList_FirstIndexOf(IList* self, IListPredicate predicate, void* userData, 
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     return Error_CreateSuccess();
 }
 
-Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, size_t* outValue)
+Error IList_LastIndexOf(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateListAndOutput(self, outValue, u8"outValue");
 
     if (Result.Code != ErrorCode_Success)
@@ -1185,7 +1220,8 @@ Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, s
     *outValue = LIST_INDEX_INVALID;
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = ElementCount; Index > 0; Index--)
     {
         void* ElementPointer = NULL;
@@ -1194,7 +1230,7 @@ Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, s
         Result = GetElementPointerOrCopy(self, Index - 1, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -1210,15 +1246,16 @@ Error IList_LastIndexOf(IList* self, IListPredicate predicate, void* userData, s
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     return Error_CreateSuccess();
 }
 
-Error IList_Reverse(IList* self)
+Error IList_Reverse(IList* self, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateWritableList(self);
 
     if (Result.Code != ErrorCode_Success)
@@ -1233,7 +1270,8 @@ Error IList_Reverse(IList* self)
     }
 
     ElementSize = IList_GetElementSize(self);
-    ScratchBuffer = Memory_Allocate(ElementSize * 2);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize * 2);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     for (size_t Index = 0; Index < (ElementCount / 2); Index++)
     {
         size_t OppositeIndex = ElementCount - Index - 1;
@@ -1245,22 +1283,23 @@ Error IList_Reverse(IList* self)
             ScratchBuffer + ElementSize);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
     }
 
-    Memory_Free(ScratchBuffer);
+    Memory_Free(OwnedScratch);
     return Error_CreateSuccess();
 }
 
-Error IList_CopyTo(IList* self, GenericBuffer* destination)
+Error IList_CopyTo(IList* self, GenericBuffer* destination, void* scratch)
 {
     size_t ElementCount = 0;
     size_t ElementSize = 0;
     size_t DestinationStartIndex = 0;
     unsigned char* DestinationWritePointer = NULL;
     unsigned char* ScratchBuffer = NULL;
+    unsigned char* OwnedScratch = NULL;
     Error Result = ValidateList(self);
 
     if (Result.Code != ErrorCode_Success)
@@ -1279,10 +1318,11 @@ Error IList_CopyTo(IList* self, GenericBuffer* destination)
     ElementCount = IList_GetElementCount(self);
     ElementSize = IList_GetElementSize(self);
     DestinationStartIndex = destination->_count;
-    ScratchBuffer = Memory_Allocate(ElementSize);
+    OwnedScratch = (scratch != NULL) ? NULL : Memory_Allocate(ElementSize);
+    ScratchBuffer = (scratch != NULL) ? (unsigned char*)scratch : OwnedScratch;
     if (!GenericBuffer_TryPrepareForManualMutation(destination, ElementCount))
     {
-        Memory_Free(ScratchBuffer);
+        Memory_Free(OwnedScratch);
         return Error_Construct1(ErrorCode_InvalidOperation,
             u8"Could not prepare the destination buffer for copied list elements.");
     }
@@ -1295,7 +1335,7 @@ Error IList_CopyTo(IList* self, GenericBuffer* destination)
         Result = GetElementPointerOrCopy(self, Index, &ElementPointer, ScratchBuffer);
         if (Result.Code != ErrorCode_Success)
         {
-            Memory_Free(ScratchBuffer);
+            Memory_Free(OwnedScratch);
             return Result;
         }
 
@@ -1303,9 +1343,79 @@ Error IList_CopyTo(IList* self, GenericBuffer* destination)
         DestinationWritePointer += destination->_elementSize;
     }
 
-    Memory_Free(ScratchBuffer);
-    destination->_count = DestinationStartIndex + ElementCount;
+    Memory_Free(OwnedScratch);
+    GenericBuffer_SetCount(destination, DestinationStartIndex + ElementCount);
     return Error_CreateSuccess();
+}
+
+Error IList_FilterAllocating(IList* self, IListPredicate predicate, const UserData* userData)
+{
+    return IList_Filter(self, predicate, userData, NULL);
+}
+
+Error IList_MapAllocating(IList* self, GenericBuffer* destination, IListMapper mapper, const UserData* userData)
+{
+    return IList_Map(self, destination, mapper, userData, NULL);
+}
+
+Error IList_SumIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue)
+{
+    return IList_SumInt(self, extractor, userData, outValue, NULL);
+}
+
+Error IList_SumDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue)
+{
+    return IList_SumDouble(self, extractor, userData, outValue, NULL);
+}
+
+Error IList_MaxIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue)
+{
+    return IList_MaxInt(self, extractor, userData, outValue, NULL);
+}
+
+Error IList_MaxDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue)
+{
+    return IList_MaxDouble(self, extractor, userData, outValue, NULL);
+}
+
+Error IList_MinIntAllocating(IList* self, IListIntExtractor extractor, const UserData* userData, int64_t* outValue)
+{
+    return IList_MinInt(self, extractor, userData, outValue, NULL);
+}
+
+Error IList_MinDoubleAllocating(IList* self, IListDoubleExtractor extractor, const UserData* userData, double* outValue)
+{
+    return IList_MinDouble(self, extractor, userData, outValue, NULL);
+}
+
+Error IList_ContainsAllocating(IList* self, IListPredicate predicate, const UserData* userData, bool* outValue)
+{
+    return IList_Contains(self, predicate, userData, outValue, NULL);
+}
+
+Error IList_CountWhereAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue)
+{
+    return IList_CountWhere(self, predicate, userData, outValue, NULL);
+}
+
+Error IList_FirstIndexOfAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue)
+{
+    return IList_FirstIndexOf(self, predicate, userData, outValue, NULL);
+}
+
+Error IList_LastIndexOfAllocating(IList* self, IListPredicate predicate, const UserData* userData, size_t* outValue)
+{
+    return IList_LastIndexOf(self, predicate, userData, outValue, NULL);
+}
+
+Error IList_ReverseAllocating(IList* self)
+{
+    return IList_Reverse(self, NULL);
+}
+
+Error IList_CopyToAllocating(IList* self, GenericBuffer* destination)
+{
+    return IList_CopyTo(self, destination, NULL);
 }
 
 Error IList_Deconstruct(IList* self)

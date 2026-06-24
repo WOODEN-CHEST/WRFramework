@@ -768,7 +768,7 @@ static Error SocketStream_Read(void* selfVoid, GenericBuffer* dest, size_t readS
             return Error_CreateSuccess();
         }
 
-        dest->_count += (size_t)ReadCount;
+        GenericBuffer_CommitCount(dest, (size_t)ReadCount);
         RemainingSize -= (size_t)ReadCount;
         if ((size_t)ReadCount < ChunkSize)
         {
@@ -1627,7 +1627,7 @@ Error UdpSocket_Receive(UdpSocket* self, GenericBuffer* buffer, size_t* outBytes
         return CreateNativeSocketError(ErrorCode_IO, u8"receive a UDP datagram", SocketPlatform_GetLastErrorCode());
     }
 
-    buffer->_count += (size_t)ReadCount;
+    GenericBuffer_CommitCount(buffer, (size_t)ReadCount);
     *outBytesRead = (size_t)ReadCount;
     if (outSender != NULL)
     {

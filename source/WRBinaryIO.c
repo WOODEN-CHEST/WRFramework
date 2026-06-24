@@ -327,7 +327,8 @@ static Error WriteBinaryValue(BinaryConverter* self, GenericBuffer* destination,
             u8"Cannot write a binary value of %zu bytes because the converter temporary buffer is too small.",
             valueSize);
     }
-    if (!GenericBuffer_TryPrepareForManualMutation(destination, valueSize))
+    void* DestinationTail = NULL;
+    if (!GenericBuffer_GetWritableTail(destination, valueSize, &DestinationTail))
     {
         return Error_Construct3(ErrorCode_BufferTooSmall,
             u8"Destination buffer is too small to hold a binary value of %zu bytes.",
@@ -340,8 +341,8 @@ static Error WriteBinaryValue(BinaryConverter* self, GenericBuffer* destination,
         ReverseByteOrder(TempBuffer, valueSize);
     }
 
-    Memory_Copy(TempBuffer, destination->_data + destination->_count, valueSize);
-    destination->_count += valueSize;
+    Memory_Copy(TempBuffer, DestinationTail, valueSize);
+    GenericBuffer_CommitCount(destination, valueSize);
     return Error_CreateSuccess();
 }
 

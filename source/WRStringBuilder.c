@@ -101,14 +101,14 @@ static Error CreateOverflowError(const unsigned char* operationName)
 
 static bool StringBuilderBufferAllocate(GenericBuffer* destination, size_t requestedCapacity)
 {
-    void* NewData = Memory_Reallocate(destination->_data, requestedCapacity * destination->_elementSize);
+    size_t NewSize = 0;
 
-    if (NewData == NULL)
+    if (!Memory_TryMultiplySize(requestedCapacity, destination->_elementSize, &NewSize))
     {
         return false;
     }
 
-    destination->_data = NewData;
+    destination->_data = Memory_Reallocate(destination->_data, NewSize);
     destination->_capacity = requestedCapacity;
     return true;
 }
@@ -313,7 +313,7 @@ static Error PrepareExternalStringBuffer(GenericBuffer* buffer, const unsigned c
         return Result;
     }
 
-    buffer->_count = ContentLength;
+    GenericBuffer_SetCount(buffer, ContentLength);
     return SyncNullTerminator(buffer, u8"use the wrapped StringBuilder buffer");
 }
 
@@ -330,16 +330,16 @@ static Error PrepareExternalTempBuffer(GenericBuffer* buffer, const unsigned cha
     {
         if (buffer->_data[buffer->_count - 1U] == u8'\0')
         {
-            buffer->_count--;
+            GenericBuffer_SetCount(buffer, buffer->_count - 1U);
         }
         else
         {
-            buffer->_count = 0;
+            GenericBuffer_SetCount(buffer, 0);
         }
     }
     else
     {
-        buffer->_count = 0;
+        GenericBuffer_SetCount(buffer, 0);
     }
 
     return SyncNullTerminator(buffer, u8"use the wrapped StringBuilder temp buffer");
@@ -515,9 +515,9 @@ static Error InsertFormattedNumber(StringBuilder* self,
         return CreateInvalidStateError();
     }
 
-    self->_activeTempBuffer->_count--;
+    GenericBuffer_SetCount(self->_activeTempBuffer, self->_activeTempBuffer->_count - 1U);
     Result = InsertBytesFromTempBuffer(self, index, operationName);
-    self->_activeTempBuffer->_count++;
+    GenericBuffer_CommitCount(self->_activeTempBuffer, 1);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;

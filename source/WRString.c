@@ -50,14 +50,6 @@ static Error CreateByteBufferTypeError(const unsigned char* argumentName, size_t
         elementSize);
 }
 
-static Error CreatePointerBufferTypeError(const unsigned char* argumentName, size_t elementSize)
-{
-    return Error_Construct3(ErrorCode_IllegalArgument,
-        u8"String argument \"%s\" must be a pointer buffer, got element size %zu.",
-        argumentName,
-        elementSize);
-}
-
 static Error CreateIndexBufferTypeError(const unsigned char* argumentName, size_t elementSize)
 {
     return Error_Construct3(ErrorCode_IllegalArgument,
@@ -104,14 +96,14 @@ static Error CreateIndexOutOfBoundsError(const unsigned char* operationName)
 
 static bool StringBufferAllocate(GenericBuffer* destination, size_t requestedCapacity)
 {
-    void* NewData = Memory_Reallocate(destination->_data, requestedCapacity * destination->_elementSize);
+    size_t NewSize = 0;
 
-    if (NewData == NULL)
+    if (!Memory_TryMultiplySize(requestedCapacity, destination->_elementSize, &NewSize))
     {
         return false;
     }
 
-    destination->_data = NewData;
+    destination->_data = Memory_Reallocate(destination->_data, NewSize);
     destination->_capacity = requestedCapacity;
     return true;
 }
@@ -179,20 +171,6 @@ static Error ValidateByteBuffer(GenericBuffer* buffer, const unsigned char* argu
     return Error_CreateSuccess();
 }
 
-static Error ValidatePointerBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
-{
-    if (buffer == NULL)
-    {
-        return CreateNullArgumentError(argumentName);
-    }
-    if (buffer->_elementSize != sizeof(unsigned char*))
-    {
-        return CreatePointerBufferTypeError(argumentName, buffer->_elementSize);
-    }
-
-    return Error_CreateSuccess();
-}
-
 static Error ValidateIndexBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
 {
     if (buffer == NULL)
@@ -210,11 +188,6 @@ static Error ValidateIndexBuffer(GenericBuffer* buffer, const unsigned char* arg
 static Error PrepareByteBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
 {
     return ValidateByteBuffer(buffer, argumentName);
-}
-
-static Error PreparePointerBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
-{
-    return ValidatePointerBuffer(buffer, argumentName);
 }
 
 static Error PrepareIndexBuffer(GenericBuffer* buffer, const unsigned char* argumentName)
@@ -258,6 +231,20 @@ static Error AppendBytes(GenericBuffer* destination, const unsigned char* bytes,
     return Error_CreateSuccess();
 }
 
+// Treats the destination as one growing string: if it already ends with a null terminator, drops
+// that terminator so newly appended content continues the existing string instead of leaving an
+// embedded null. Call once before appending; the writer re-terminates at the end. Record-style
+// buffers that hold several null-terminated strings (e.g. StringUTF8_Split output) must NOT use this.
+static void DropTrailingTerminator(GenericBuffer* destination)
+{
+    if ((destination != NULL)
+        && (destination->_count > 0)
+        && (destination->_data[destination->_count - 1] == 0))
+    {
+        GenericBuffer_SetCount(destination, destination->_count - 1);
+    }
+}
+
 static Error WriteBytesToBuffer(GenericBuffer* destination,
     const unsigned char* bytes,
     size_t byteCount,
@@ -270,6 +257,7 @@ static Error WriteBytesToBuffer(GenericBuffer* destination,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     if (byteCount == SIZE_MAX)
     {
         return CreateOverflowError(operationName);
@@ -876,6 +864,7 @@ Error StringUTF8_ToLower(const unsigned char* str, UnicodeData* unicode, Generic
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     while (Index < ByteLength)
     {
@@ -931,6 +920,7 @@ Error StringUTF8_ToUpper(const unsigned char* str, UnicodeData* unicode, Generic
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     while (Index < ByteLength)
     {
@@ -986,6 +976,7 @@ Error StringUTF8_InvertCase(const unsigned char* str, UnicodeData* unicode, Gene
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     while (Index < ByteLength)
     {
@@ -1215,7 +1206,7 @@ Error StringUTF8_Split(const unsigned char* str,
     size_t delimeterCount,
     StringSplitOptions splitOptions,
     GenericBuffer* stringBuffer,
-    GenericBuffer* resultPointers,
+    GenericBuffer* resultIndices,
     UnicodeData* unicode)
 {
     size_t StringLength = 0;
@@ -1233,7 +1224,7 @@ Error StringUTF8_Split(const unsigned char* str,
     {
         return Result;
     }
-    Result = PreparePointerBuffer(resultPointers, u8"resultPointers");
+    Result = PrepareIndexBuffer(resultIndices, u8"resultIndices");
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -1259,19 +1250,27 @@ Error StringUTF8_Split(const unsigned char* str,
     StringLength = StringUTF8_GetByteLength(str);
     if ((splitOptions._stringCountLimit == 0) || (delimeterCount == 0))
     {
-        unsigned char* SegmentPointer = NULL;
-        size_t PreviousCount = stringBuffer->_count;
+        size_t SegmentOffset = stringBuffer->_count;
 
-        Result = StringUTF8_CopyTo(str, stringBuffer);
+        if ((StringLength > 0) && !IsRegionEncodingValid(str, StringLength))
+        {
+            return CreateInvalidEncodingError(u8"split the string");
+        }
+
+        // Build the single segment as a raw null-terminated record (not via StringUTF8_CopyTo, which
+        // now overwrites a trailing terminator) so the segment buffer stays a sequence of records.
+        Result = AppendBytes(stringBuffer, str, StringLength, u8"split the string");
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
         }
-
-        SegmentPointer = (unsigned char*)stringBuffer->_data + PreviousCount;
-        if (!GenericBuffer_AddLast(resultPointers, &SegmentPointer))
+        if (!GenericBuffer_AppendByte(stringBuffer, 0))
         {
-            return CreateBufferTooSmallError(u8"split the string", resultPointers->_count + 1);
+            return CreateBufferTooSmallError(u8"split the string", stringBuffer->_count + 1);
+        }
+        if (!GenericBuffer_AddLast(resultIndices, &SegmentOffset))
+        {
+            return CreateBufferTooSmallError(u8"split the string", resultIndices->_count + 1);
         }
 
         return Error_CreateSuccess();
@@ -1325,7 +1324,6 @@ Error StringUTF8_Split(const unsigned char* str,
             size_t SegmentEnd = (FoundIndex == STRING_INDEX_INVALID) ? StringLength : FoundIndex;
             size_t TrimStart = SegmentStart;
             size_t TrimLength = SegmentEnd - SegmentStart;
-            unsigned char* SegmentPointer = NULL;
 
             if (splitOptions._splitType & StringSplitType_TrimEntries)
             {
@@ -1345,7 +1343,7 @@ Error StringUTF8_Split(const unsigned char* str,
 
             if (!((splitOptions._splitType & StringSplitType_SkipEmptyEntries) && (TrimLength == 0)))
             {
-                size_t PreviousCount = stringBuffer->_count;
+                size_t SegmentOffset = stringBuffer->_count;
 
                 Result = AppendBytes(stringBuffer, str + TrimStart, TrimLength, u8"split the string");
                 if (Result.Code != ErrorCode_Success)
@@ -1357,10 +1355,9 @@ Error StringUTF8_Split(const unsigned char* str,
                     return CreateBufferTooSmallError(u8"split the string", stringBuffer->_count + 1);
                 }
 
-                SegmentPointer = (unsigned char*)stringBuffer->_data + PreviousCount;
-                if (!GenericBuffer_AddLast(resultPointers, &SegmentPointer))
+                if (!GenericBuffer_AddLast(resultIndices, &SegmentOffset))
                 {
-                    return CreateBufferTooSmallError(u8"split the string", resultPointers->_count + 1);
+                    return CreateBufferTooSmallError(u8"split the string", resultIndices->_count + 1);
                 }
 
                 ResultCount++;
@@ -1484,6 +1481,7 @@ Error StringUTF8_Concat(const unsigned char* strA,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     LengthA = StringUTF8_GetByteLength(strA);
     LengthB = StringUTF8_GetByteLength(strB);
     if (LengthA > (SIZE_MAX - LengthB - 1))
@@ -1831,6 +1829,7 @@ Error StringUTF8_Join(const unsigned char* separator,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     SeparatorLength = StringUTF8_GetByteLength(separator);
     for (size_t Index = 0; Index < sourcesSize; Index++)
     {
@@ -1898,6 +1897,7 @@ Error StringUTF8_Replace(const unsigned char* str,
         return StringUTF8_CopyTo(str, destination);
     }
 
+    DropTrailingTerminator(destination);
     StringLength = StringUTF8_GetByteLength(str);
     while (SearchIndex < StringLength)
     {
@@ -2112,6 +2112,7 @@ Error StringUTF8_Remove(const unsigned char* str,
         return StringUTF8_CopyTo(str, destination);
     }
 
+    DropTrailingTerminator(destination);
     StringLength = StringUTF8_GetByteLength(str);
     while (SearchIndex < StringLength)
     {
@@ -2175,6 +2176,7 @@ Error StringUTF8_Insert(const unsigned char* str,
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     SubstringLength = StringUTF8_GetByteLength(substring);
     if (index > ByteLength)
@@ -2229,6 +2231,7 @@ Error StringUTF8_Reverse(const unsigned char* str, GenericBuffer* destination)
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     Result = GetCharacterIndicesInternal(str, &CharacterIndices);
     if (Result.Code != ErrorCode_Success)
@@ -2280,6 +2283,7 @@ Error StringUTF8_Repeat(const unsigned char* str, GenericBuffer* destination, si
         return Result;
     }
 
+    DropTrailingTerminator(destination);
     ByteLength = StringUTF8_GetByteLength(str);
     if ((count > 0) && (ByteLength > ((SIZE_MAX - 1) / count)))
     {

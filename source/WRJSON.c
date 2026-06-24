@@ -4,6 +4,7 @@
 #include "WRHashMap.h"
 #include "WRMap.h"
 #include "WRList.h"
+#include "WRObjectPool.h"
 #include "WRChar.h"
 #include "WRNumber.h"
 #include "WRString.h"
@@ -15,6 +16,7 @@
 #define JSON_INDENT_SIZE ((size_t)4)
 #define JSON_ENTRY_COLLECTION_KIND_ENTRY ((uint8_t)0)
 #define JSON_INDEXED_COLLECTION_KIND_INDEXED ((uint8_t)1)
+#define JSON_POOL_SECTION_CAPACITY ((size_t)16)
 
 
 // Types.
@@ -57,13 +59,10 @@ typedef struct JSONArrayStruct
 
 typedef struct JSONObjectPoolStruct
 {
-    ArrayList _allCompounds;
-    ArrayList _availableCompounds;
-    ArrayList _allArrays;
-    ArrayList _availableArrays;
-    ArrayList _allStrings;
-    ArrayList _availableStrings;
-    ArrayList _allKeys;
+    ObjectPool _compoundPool;   // Pools JSONCompound structs.
+    ObjectPool _arrayPool;      // Pools JSONArray structs.
+    ObjectPool _stringPool;     // Pools string GenericBuffer structs.
+    GenericBuffer _allKeys;     // Owns the duplicated key byte buffers (unsigned char*); freed at teardown.
 } JSONObjectPool;
 
 
@@ -386,7 +385,7 @@ static CodePoint DecodeSurrogatePair(uint16_t highSurrogate, uint16_t lowSurroga
     return (CodePoint)(UINT32_C(0x10000) + ((HighPart << 10) | LowPart));
 }
 
-static HashCode JSONKey_Hash(IMap* map, const void* key, void* userData)
+static HashCode JSONKey_Hash(IMap* map, const void* key, const UserData* userData)
 {
     const unsigned char* const* KeyPointer = key;
 
@@ -400,7 +399,7 @@ static HashCode JSONKey_Hash(IMap* map, const void* key, void* userData)
     return Hash_String(*KeyPointer);
 }
 
-static bool JSONKey_AreEqual(IMap* map, const void* key1, const void* key2, void* userData)
+static bool JSONKey_AreEqual(IMap* map, const void* key1, const void* key2, const UserData* userData)
 {
     const unsigned char* const* KeyPointer1 = key1;
     const unsigned char* const* KeyPointer2 = key2;
@@ -429,7 +428,7 @@ static Error JSONObjectPool_RegisterKey(JSONObjectPool* self, unsigned char* key
     {
         return CreateNullArgumentError(u8"keyCopy");
     }
-    if (IList_AddLast(&self->_allKeys._list, &keyCopy).Code != ErrorCode_Success)
+    if (!GenericBuffer_AddLast(&self->_allKeys, &keyCopy))
     {
         return CreateCapacityError(u8"register JSON object key");
     }
@@ -437,25 +436,26 @@ static Error JSONObjectPool_RegisterKey(JSONObjectPool* self, unsigned char* key
     return Error_CreateSuccess();
 }
 
-static Error JSONObjectPool_CreateCompoundStorage(JSONObjectPool* self, JSONCompound** outCompound)
+// The pooled object storage (compounds, arrays, strings) is managed by WRObjectPool. Each object type
+// supplies three lifecycle callbacks: ConstructObject runs once per pool slot to build the object's
+// internal storage, DeconstructObject frees it at teardown, and a shared no-op ResetObject is used
+// because borrowed objects are cleared explicitly on borrow and their storage is retained for reuse.
+// The owning JSONObjectPool* is passed to each pool as UserData and recovered with UserData_GetPointer.
+
+static Error JSONPool_ResetObjectNoOp(void* object, const UserData* userData)
 {
-    JSONCompound* Compound = NULL;
+    UNUSED(object);
+    UNUSED(userData);
+    return Error_CreateSuccess();
+}
+
+static Error JSONCompoundPool_ConstructObject(void* object, const UserData* userData)
+{
+    JSONCompound* Compound = object;
     HashMapConstructOptions Options;
     Error Result = Error_CreateSuccess();
 
-    if (outCompound == NULL)
-    {
-        return CreateNullArgumentError(u8"outCompound");
-    }
-
-    *outCompound = NULL;
-    Compound = Memory_Allocate(sizeof(*Compound));
-    if (Compound == NULL)
-    {
-        return CreateCapacityError(u8"allocate JSON compound");
-    }
-
-    Compound->_pool = self;
+    Compound->_pool = UserData_GetPointer(userData);
     Options = HashMapConstructOptions_CreateDefault(sizeof(unsigned char*),
         sizeof(JSONObjectValue),
         JSONKey_Hash);
@@ -463,58 +463,57 @@ static Error JSONObjectPool_CreateCompoundStorage(JSONObjectPool* self, JSONComp
     Result = HashMap_Construct1(&Compound->_elements, Options);
     if (Result.Code != ErrorCode_Success)
     {
-        Memory_Free(Compound);
         return Result;
     }
 
     InitializeCompoundCollection(Compound);
-    *outCompound = Compound;
     return Error_CreateSuccess();
 }
 
-static Error JSONObjectPool_CreateArrayStorage(JSONObjectPool* self, JSONArray** outArray)
+static Error JSONCompoundPool_DeconstructObject(void* object, const UserData* userData)
 {
-    JSONArray* Array = NULL;
+    JSONCompound* Compound = object;
 
-    if (outArray == NULL)
-    {
-        return CreateNullArgumentError(u8"outArray");
-    }
+    UNUSED(userData);
+    return HashMap_Deconstruct(&Compound->_elements);
+}
 
-    *outArray = NULL;
-    Array = Memory_Allocate(sizeof(*Array));
-    if (Array == NULL)
-    {
-        return CreateCapacityError(u8"allocate JSON array");
-    }
+static Error JSONArrayPool_ConstructObject(void* object, const UserData* userData)
+{
+    JSONArray* Array = object;
 
-    Array->_pool = self;
+    Array->_pool = UserData_GetPointer(userData);
     ArrayList_Construct1(&Array->_elements, sizeof(JSONObjectValue));
     InitializeArrayCollection(Array);
-    *outArray = Array;
     return Error_CreateSuccess();
 }
 
-static Error JSONObjectPool_CreateStringStorage(JSONObjectPool* self, GenericBuffer** outStringBuffer)
+static Error JSONArrayPool_DeconstructObject(void* object, const UserData* userData)
 {
-    GenericBuffer* StringBuffer = NULL;
+    JSONArray* Array = object;
 
-    UNUSED(self);
-    if (outStringBuffer == NULL)
-    {
-        return CreateNullArgumentError(u8"outStringBuffer");
-    }
+    UNUSED(userData);
+    ArrayList_Deconstruct(&Array->_elements);
+    return Error_CreateSuccess();
+}
 
-    *outStringBuffer = NULL;
-    StringBuffer = Memory_Allocate(sizeof(*StringBuffer));
-    if (StringBuffer == NULL)
-    {
-        return CreateCapacityError(u8"allocate JSON string");
-    }
+static Error JSONStringPool_ConstructObject(void* object, const UserData* userData)
+{
+    GenericBuffer* StringBuffer = object;
 
     GenericBuffer_AllocateVariable(StringBuffer, 0, sizeof(unsigned char));
-    StringBuffer->_userData = self;
-    *outStringBuffer = StringBuffer;
+    // Store the owning pool as the buffer's allocator user-data (the default growth callback ignores
+    // it); JSONObjectPool_ReturnString uses it to reject foreign buffers.
+    StringBuffer->_userData = UserData_GetPointer(userData);
+    return Error_CreateSuccess();
+}
+
+static Error JSONStringPool_DeconstructObject(void* object, const UserData* userData)
+{
+    GenericBuffer* StringBuffer = object;
+
+    UNUSED(userData);
+    Memory_Free(StringBuffer->_data);
     return Error_CreateSuccess();
 }
 
@@ -817,12 +816,18 @@ static void JSONCompoundEntryEnumerator_Deconstruct(void* self)
 
     if (EnumeratorSelf->_inner != NULL)
     {
-        CollectionEnumerator_Deconstruct(EnumeratorSelf->_inner);
+        // The outer enumerator is caller-owned, but it owns its inner enumerator (cold path).
+        CollectionEnumerator_Destroy(EnumeratorSelf->_inner);
     }
-    Memory_Free(EnumeratorSelf);
 }
 
-static CollectionEnumerator* JSONCompound_GetEntryEnumerator(void* self)
+static size_t JSONCompound_GetEntryEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(JSONCompoundEntryEnumerator);
+}
+
+static CollectionEnumerator* JSONCompound_InitEntryEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
@@ -833,26 +838,14 @@ static CollectionEnumerator* JSONCompound_GetEntryEnumerator(void* self)
         ._deconstruct = JSONCompoundEntryEnumerator_Deconstruct,
     };
     JSONCompound* CompoundSelf = self;
-    JSONCompoundEntryEnumerator* Enumerator = NULL;
+    JSONCompoundEntryEnumerator* Enumerator = buffer;
 
-    if (CompoundSelf == NULL)
+    if ((CompoundSelf == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
-    if (Enumerator == NULL)
-    {
-        return NULL;
-    }
-
-    Enumerator->_inner = ICollection_GetEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&CompoundSelf->_elements)));
-    if (Enumerator->_inner == NULL)
-    {
-        Memory_Free(Enumerator);
-        return NULL;
-    }
-
+    Enumerator->_inner = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&CompoundSelf->_elements)));
     Enumerator->Base._singleElementSize = sizeof(JSONCompoundEntry);
     Enumerator->Base._flags = EnumeratorFlags_CanReturnByReference;
     Enumerator->Base._vtable = EnumeratorTemplate;
@@ -937,17 +930,17 @@ static Error JSONArrayIndexedEnumerator_NextByReference(void* self, void** outPo
 
 static void JSONArrayIndexedEnumerator_Deconstruct(void* self)
 {
-    JSONArrayIndexedEnumerator* EnumeratorSelf = self;
-
-    if (EnumeratorSelf == NULL)
-    {
-        return;
-    }
-
-    Memory_Free(EnumeratorSelf);
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
-static CollectionEnumerator* JSONArray_GetIndexedEnumerator(void* self)
+static size_t JSONArray_GetIndexedEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(JSONArrayIndexedEnumerator);
+}
+
+static CollectionEnumerator* JSONArray_InitIndexedEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
@@ -958,15 +951,9 @@ static CollectionEnumerator* JSONArray_GetIndexedEnumerator(void* self)
         ._deconstruct = JSONArrayIndexedEnumerator_Deconstruct,
     };
     JSONArray* ArraySelf = self;
-    JSONArrayIndexedEnumerator* Enumerator = NULL;
+    JSONArrayIndexedEnumerator* Enumerator = buffer;
 
-    if (ArraySelf == NULL)
-    {
-        return NULL;
-    }
-
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
-    if (Enumerator == NULL)
+    if ((ArraySelf == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
@@ -986,7 +973,8 @@ static void InitializeCompoundCollection(JSONCompound* self)
     static const ICollectionVtable EntryCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = JSONCompound_GetEntryEnumerator,
+        ._getEnumeratorSize = JSONCompound_GetEntryEnumeratorSize,
+        ._initEnumerator = JSONCompound_InitEntryEnumerator,
     };
 
     self->_entryCollection._vtable = EntryCollectionTemplate;
@@ -998,7 +986,8 @@ static void InitializeArrayCollection(JSONArray* self)
     static const ICollectionVtable IndexedCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumerator = JSONArray_GetIndexedEnumerator,
+        ._getEnumeratorSize = JSONArray_GetIndexedEnumeratorSize,
+        ._initEnumerator = JSONArray_InitIndexedEnumerator,
     };
 
     self->_indexedCollection._vtable = IndexedCollectionTemplate;
@@ -1802,7 +1791,7 @@ static Error SerializeCompound(JSONCompound* value,
         }
     }
 
-    Enumerator = ICollection_GetEnumerator(JSONCompound_GetEntryCollection(value));
+    Enumerator = ICollection_CreateEnumerator(JSONCompound_GetEntryCollection(value));
     if (Enumerator == NULL)
     {
         return CreateSerializeError(u8"could not enumerate object entries");
@@ -1885,7 +1874,7 @@ static Error SerializeCompound(JSONCompound* value,
         }
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -2018,10 +2007,12 @@ static Error SerializeValue(JSONObjectValue* value,
             Result = Number_Int64ToString(value->Value.Integer, NUMBER_BASE_10, false, &NumberBuffer);
             if (Result.Code == ErrorCode_Success)
             {
-                while ((NumberBuffer._count > 0) && (NumberBuffer._data[NumberBuffer._count - 1] == 0))
+                size_t TrimmedCount = NumberBuffer._count;
+                while ((TrimmedCount > 0) && (NumberBuffer._data[TrimmedCount - 1] == 0))
                 {
-                    NumberBuffer._count--;
+                    TrimmedCount--;
                 }
+                GenericBuffer_SetCount(&NumberBuffer, TrimmedCount);
                 Result = AppendBytes(destination, NumberBuffer._data, NumberBuffer._count, u8"write integer");
             }
             Memory_Free(NumberBuffer._data);
@@ -2037,10 +2028,12 @@ static Error SerializeValue(JSONObjectValue* value,
                 DecimalFormatOptions_CreateShortest(DecimalSeparator_Period));
             if (Result.Code == ErrorCode_Success)
             {
-                while ((NumberBuffer._count > 0) && (NumberBuffer._data[NumberBuffer._count - 1] == 0))
+                size_t TrimmedCount = NumberBuffer._count;
+                while ((TrimmedCount > 0) && (NumberBuffer._data[TrimmedCount - 1] == 0))
                 {
-                    NumberBuffer._count--;
+                    TrimmedCount--;
                 }
+                GenericBuffer_SetCount(&NumberBuffer, TrimmedCount);
                 Result = AppendBytes(destination, NumberBuffer._data, NumberBuffer._count, u8"write real number");
             }
             Memory_Free(NumberBuffer._data);
@@ -2212,7 +2205,7 @@ Error JSONCompound_Clear(JSONCompound* self)
         return CreateNullArgumentError(u8"self");
     }
 
-    Enumerator = ICollection_GetEnumerator(IMap_AsValueCollection(HashMap_AsMap(&self->_elements)));
+    Enumerator = ICollection_CreateEnumerator(IMap_AsValueCollection(HashMap_AsMap(&self->_elements)));
     if (Enumerator == NULL)
     {
         return CreateCapacityError(u8"enumerate JSON compound values");
@@ -2238,7 +2231,7 @@ Error JSONCompound_Clear(JSONCompound* self)
         Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -2531,7 +2524,27 @@ ICollection* JSONArray_GetElementCollection(JSONArray* self)
 
 Error JSONObjectPool_Create(JSONObjectPool** outPool)
 {
+    static const ObjectPoolLifecycle CompoundLifecycle =
+    {
+        .ConstructObject = JSONCompoundPool_ConstructObject,
+        .ResetObject = JSONPool_ResetObjectNoOp,
+        .DeconstructObject = JSONCompoundPool_DeconstructObject,
+    };
+    static const ObjectPoolLifecycle ArrayLifecycle =
+    {
+        .ConstructObject = JSONArrayPool_ConstructObject,
+        .ResetObject = JSONPool_ResetObjectNoOp,
+        .DeconstructObject = JSONArrayPool_DeconstructObject,
+    };
+    static const ObjectPoolLifecycle StringLifecycle =
+    {
+        .ConstructObject = JSONStringPool_ConstructObject,
+        .ResetObject = JSONPool_ResetObjectNoOp,
+        .DeconstructObject = JSONStringPool_DeconstructObject,
+    };
     JSONObjectPool* Pool = NULL;
+    UserData PoolUserData;
+    Error Result = Error_CreateSuccess();
 
     if (outPool == NULL)
     {
@@ -2540,98 +2553,114 @@ Error JSONObjectPool_Create(JSONObjectPool** outPool)
 
     *outPool = NULL;
     Pool = Memory_Allocate(sizeof(*Pool));
-    if (Pool == NULL)
+
+    // Each pool keeps a back-pointer to its owner (this JSONObjectPool) in its UserData so the
+    // lifecycle callbacks can reach it. Pool outlives all three pools, so the pointer stays valid.
+    PoolUserData = UserData_FromPointer(Pool);
+
+    Result = ObjectPool_Construct2(&Pool->_compoundPool, sizeof(JSONCompound), JSON_POOL_SECTION_CAPACITY, CompoundLifecycle, &PoolUserData);
+    if (Result.Code != ErrorCode_Success)
     {
-        return CreateCapacityError(u8"allocate JSON object pool");
+        Memory_Free(Pool);
+        return Result;
     }
 
-    ArrayList_Construct1(&Pool->_allCompounds, sizeof(JSONCompound*));
-    ArrayList_Construct1(&Pool->_availableCompounds, sizeof(JSONCompound*));
-    ArrayList_Construct1(&Pool->_allArrays, sizeof(JSONArray*));
-    ArrayList_Construct1(&Pool->_availableArrays, sizeof(JSONArray*));
-    ArrayList_Construct1(&Pool->_allStrings, sizeof(GenericBuffer*));
-    ArrayList_Construct1(&Pool->_availableStrings, sizeof(GenericBuffer*));
-    ArrayList_Construct1(&Pool->_allKeys, sizeof(unsigned char*));
+    Result = ObjectPool_Construct2(&Pool->_arrayPool, sizeof(JSONArray), JSON_POOL_SECTION_CAPACITY, ArrayLifecycle, &PoolUserData);
+    if (Result.Code != ErrorCode_Success)
+    {
+        Error Cleanup = ObjectPool_Deconstruct(&Pool->_compoundPool);
+        Error_Deconstruct(&Cleanup);
+        Memory_Free(Pool);
+        return Result;
+    }
+
+    Result = ObjectPool_Construct2(&Pool->_stringPool, sizeof(GenericBuffer), JSON_POOL_SECTION_CAPACITY, StringLifecycle, &PoolUserData);
+    if (Result.Code != ErrorCode_Success)
+    {
+        Error CleanupArray = ObjectPool_Deconstruct(&Pool->_arrayPool);
+        Error CleanupCompound = ObjectPool_Deconstruct(&Pool->_compoundPool);
+        Error_Deconstruct(&CleanupArray);
+        Error_Deconstruct(&CleanupCompound);
+        Memory_Free(Pool);
+        return Result;
+    }
+
+    GenericBuffer_AllocateVariable(&Pool->_allKeys, 0, sizeof(unsigned char*));
     *outPool = Pool;
     return Error_CreateSuccess();
+}
+
+// Folds a (possibly failed) teardown error into a running tally: counts failures, appends each
+// message to a combined buffer, and always deconstructs the candidate so nothing leaks. Lets JSON
+// pool teardown be best-effort while still reporting every failure in a single returned error.
+static void AccumulateTeardownError(GenericBuffer* messageBuffer, size_t* failureCount, Error candidate)
+{
+    if (candidate.Code != ErrorCode_Success)
+    {
+        (*failureCount)++;
+        if (candidate.Message != NULL)
+        {
+            if (*failureCount > 1)
+            {
+                GenericBuffer_AppendString(messageBuffer, (const unsigned char*)u8"; ");
+            }
+            GenericBuffer_AppendString(messageBuffer, candidate.Message);
+        }
+    }
+
+    Error_Deconstruct(&candidate);
 }
 
 Error JSONObjectPool_Deconstruct(JSONObjectPool* self)
 {
     size_t Count = 0;
-    Error Result = Error_CreateSuccess();
+    size_t FailureCount = 0;
+    GenericBuffer Messages;
+    Error Combined = Error_CreateSuccess();
 
     if (self == NULL)
     {
         return CreateNullArgumentError(u8"self");
     }
 
-    Count = IList_GetElementCount(&self->_allCompounds._list);
-    for (size_t Index = 0; Index < Count; Index++)
-    {
-        JSONCompound* Compound = NULL;
+    GenericBuffer_AllocateVariable(&Messages, 64, sizeof(unsigned char));
 
-        if (IList_GetElement(&self->_allCompounds._list, Index, &Compound).Code == ErrorCode_Success)
-        {
-            Result = HashMap_Deconstruct(&Compound->_elements);
-            if (Result.Code != ErrorCode_Success)
-            {
-                Memory_Free(Compound);
-                return Result;
-            }
+    // Each pool's teardown deconstructs every pooled object (freeing its internal storage) and frees
+    // the section blocks that hold the object structs. Keys are owned byte buffers tracked separately.
+    AccumulateTeardownError(&Messages, &FailureCount, ObjectPool_Deconstruct(&self->_compoundPool));
+    AccumulateTeardownError(&Messages, &FailureCount, ObjectPool_Deconstruct(&self->_arrayPool));
+    AccumulateTeardownError(&Messages, &FailureCount, ObjectPool_Deconstruct(&self->_stringPool));
 
-            Memory_Free(Compound);
-        }
-    }
-
-    Count = IList_GetElementCount(&self->_allArrays._list);
-    for (size_t Index = 0; Index < Count; Index++)
-    {
-        JSONArray* Array = NULL;
-
-        if (IList_GetElement(&self->_allArrays._list, Index, &Array).Code == ErrorCode_Success)
-        {
-            ArrayList_Deconstruct(&Array->_elements);
-            Memory_Free(Array);
-        }
-    }
-
-    Count = IList_GetElementCount(&self->_allStrings._list);
-    for (size_t Index = 0; Index < Count; Index++)
-    {
-        GenericBuffer* StringBuffer = NULL;
-
-        if (IList_GetElement(&self->_allStrings._list, Index, &StringBuffer).Code == ErrorCode_Success)
-        {
-            Memory_Free(StringBuffer->_data);
-            Memory_Free(StringBuffer);
-        }
-    }
-
-    Count = IList_GetElementCount(&self->_allKeys._list);
+    Count = self->_allKeys._count;
     for (size_t Index = 0; Index < Count; Index++)
     {
         unsigned char* KeyBuffer = NULL;
 
-        if (IList_GetElement(&self->_allKeys._list, Index, &KeyBuffer).Code == ErrorCode_Success)
+        if (GenericBuffer_GetAt(&self->_allKeys, Index, &KeyBuffer))
         {
             Memory_Free(KeyBuffer);
         }
     }
 
-    ArrayList_Deconstruct(&self->_allCompounds);
-    ArrayList_Deconstruct(&self->_availableCompounds);
-    ArrayList_Deconstruct(&self->_allArrays);
-    ArrayList_Deconstruct(&self->_availableArrays);
-    ArrayList_Deconstruct(&self->_allStrings);
-    ArrayList_Deconstruct(&self->_availableStrings);
-    ArrayList_Deconstruct(&self->_allKeys);
+    Memory_Free(self->_allKeys._data);
     Memory_Free(self);
-    return Error_CreateSuccess();
+
+    if (FailureCount > 0)
+    {
+        GenericBuffer_NullTerminate(&Messages);
+        Combined = Error_Construct3(ErrorCode_Deconstruct,
+            u8"JSON object pool teardown encountered %zu error(s): %s",
+            FailureCount,
+            (Messages._data != NULL) ? (const char*)Messages._data : "");
+    }
+
+    Memory_Free(Messages._data);
+    return Combined;
 }
 
 Error JSONObjectPool_BorrowCompound(JSONObjectPool* self, JSONCompound** outCompound)
 {
+    void* Object = NULL;
     JSONCompound* Compound = NULL;
     Error Result = Error_CreateSuccess();
 
@@ -2645,40 +2674,18 @@ Error JSONObjectPool_BorrowCompound(JSONObjectPool* self, JSONCompound** outComp
     }
 
     *outCompound = NULL;
-    if (IList_GetElementCount(&self->_availableCompounds._list) > 0)
+    Result = ObjectPool_GetNewObject(&self->_compoundPool, &Object);
+    if (Result.Code != ErrorCode_Success)
     {
-        Result = IList_GetLast(&self->_availableCompounds._list, &Compound);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        Result = IList_RemoveLast(&self->_availableCompounds._list);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-    }
-    else
-    {
-        Result = JSONObjectPool_CreateCompoundStorage(self, &Compound);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        Result = IList_AddLast(&self->_allCompounds._list, &Compound);
-        if (Result.Code != ErrorCode_Success)
-        {
-            HashMap_Deconstruct(&Compound->_elements);
-            Memory_Free(Compound);
-            return Result;
-        }
+        return Result;
     }
 
+    Compound = Object;
     Result = JSONCompound_Clear(Compound);
     if (Result.Code != ErrorCode_Success)
     {
+        Error DisposeResult = ObjectPool_DisposeObject(&self->_compoundPool, Compound);
+        Error_Deconstruct(&DisposeResult);
         return Result;
     }
 
@@ -2688,6 +2695,7 @@ Error JSONObjectPool_BorrowCompound(JSONObjectPool* self, JSONCompound** outComp
 
 Error JSONObjectPool_BorrowArray(JSONObjectPool* self, JSONArray** outArray)
 {
+    void* Object = NULL;
     JSONArray* Array = NULL;
     Error Result = Error_CreateSuccess();
 
@@ -2701,40 +2709,18 @@ Error JSONObjectPool_BorrowArray(JSONObjectPool* self, JSONArray** outArray)
     }
 
     *outArray = NULL;
-    if (IList_GetElementCount(&self->_availableArrays._list) > 0)
+    Result = ObjectPool_GetNewObject(&self->_arrayPool, &Object);
+    if (Result.Code != ErrorCode_Success)
     {
-        Result = IList_GetLast(&self->_availableArrays._list, &Array);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        Result = IList_RemoveLast(&self->_availableArrays._list);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-    }
-    else
-    {
-        Result = JSONObjectPool_CreateArrayStorage(self, &Array);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        Result = IList_AddLast(&self->_allArrays._list, &Array);
-        if (Result.Code != ErrorCode_Success)
-        {
-            ArrayList_Deconstruct(&Array->_elements);
-            Memory_Free(Array);
-            return Result;
-        }
+        return Result;
     }
 
+    Array = Object;
     Result = JSONArray_Clear(Array);
     if (Result.Code != ErrorCode_Success)
     {
+        Error DisposeResult = ObjectPool_DisposeObject(&self->_arrayPool, Array);
+        Error_Deconstruct(&DisposeResult);
         return Result;
     }
 
@@ -2744,6 +2730,7 @@ Error JSONObjectPool_BorrowArray(JSONObjectPool* self, JSONArray** outArray)
 
 Error JSONObjectPool_BorrowString(JSONObjectPool* self, GenericBuffer** outStringBuffer)
 {
+    void* Object = NULL;
     GenericBuffer* StringBuffer = NULL;
     Error Result = Error_CreateSuccess();
 
@@ -2757,39 +2744,17 @@ Error JSONObjectPool_BorrowString(JSONObjectPool* self, GenericBuffer** outStrin
     }
 
     *outStringBuffer = NULL;
-    if (IList_GetElementCount(&self->_availableStrings._list) > 0)
+    Result = ObjectPool_GetNewObject(&self->_stringPool, &Object);
+    if (Result.Code != ErrorCode_Success)
     {
-        Result = IList_GetLast(&self->_availableStrings._list, &StringBuffer);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        Result = IList_RemoveLast(&self->_availableStrings._list);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-    }
-    else
-    {
-        Result = JSONObjectPool_CreateStringStorage(self, &StringBuffer);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        Result = IList_AddLast(&self->_allStrings._list, &StringBuffer);
-        if (Result.Code != ErrorCode_Success)
-        {
-            Memory_Free(StringBuffer->_data);
-            Memory_Free(StringBuffer);
-            return Result;
-        }
+        return Result;
     }
 
+    StringBuffer = Object;
     if (!GenericBuffer_Clear(StringBuffer))
     {
+        Error DisposeResult = ObjectPool_DisposeObject(&self->_stringPool, StringBuffer);
+        Error_Deconstruct(&DisposeResult);
         return CreateCapacityError(u8"clear borrowed JSON string");
     }
 
@@ -2823,7 +2788,7 @@ Error JSONObjectPool_ReturnCompound(JSONObjectPool* self, JSONCompound* compound
         }
     }
 
-    return IList_AddLast(&self->_availableCompounds._list, &compound);
+    return ObjectPool_DisposeObject(&self->_compoundPool, compound);
 }
 
 Error JSONObjectPool_ReturnArray(JSONObjectPool* self, JSONArray* array, bool includeNestedStructures)
@@ -2852,7 +2817,7 @@ Error JSONObjectPool_ReturnArray(JSONObjectPool* self, JSONArray* array, bool in
         }
     }
 
-    return IList_AddLast(&self->_availableArrays._list, &array);
+    return ObjectPool_DisposeObject(&self->_arrayPool, array);
 }
 
 Error JSONObjectPool_ReturnString(JSONObjectPool* self, GenericBuffer* stringBuffer)
@@ -2874,7 +2839,7 @@ Error JSONObjectPool_ReturnString(JSONObjectPool* self, GenericBuffer* stringBuf
         return CreateCapacityError(u8"clear returned JSON string");
     }
 
-    return IList_AddLast(&self->_availableStrings._list, &stringBuffer);
+    return ObjectPool_DisposeObject(&self->_stringPool, stringBuffer);
 }
 
 Error JSONObjectPool_ReturnValue(JSONObjectPool* self, JSONObjectValue* value)

@@ -30,7 +30,7 @@ static Error CreateForeignBufferError(void)
         u8"The provided buffer does not belong to this buffer pool.");
 }
 
-static HashCode BufferPool_HashElementSize(IMap* map, const void* key, void* userData)
+static HashCode BufferPool_HashElementSize(IMap* map, const void* key, const UserData* userData)
 {
     const size_t* ElementSize = key;
 
@@ -76,7 +76,7 @@ static Error BufferPool_ResetBorrowedBuffer(GenericBuffer* buffer)
         u8"Could not clear the pooled buffer.");
 }
 
-static Error BufferPool_InitializeBorrowedBuffer(void* object, void* userData)
+static Error BufferPool_InitializeBorrowedBuffer(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
 
@@ -96,7 +96,7 @@ static Error BufferPool_InitializeBorrowedBuffer(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error BufferPool_ResetBufferObject(void* object, void* userData)
+static Error BufferPool_ResetBufferObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
 
@@ -109,7 +109,7 @@ static Error BufferPool_ResetBufferObject(void* object, void* userData)
     return BufferPool_ResetBorrowedBuffer(Buffer);
 }
 
-static Error BufferPool_DeconstructBufferObject(void* object, void* userData)
+static Error BufferPool_DeconstructBufferObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
 
@@ -228,11 +228,18 @@ Error BufferPool_Deconstruct(WRBufferPool* self)
         return Error_CreateSuccess();
     }
 
-    Enumerator = ICollection_GetEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&self->_entries)));
+    Enumerator = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&self->_entries)));
+
+    // Best-effort teardown: keep the first error, and deconstruct every later one so its message is
+    // not leaked. Error_Deconstruct on a success error is a no-op, so the success path is safe too.
     Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
-    if ((Result.Code != ErrorCode_Success) && (FirstError.Code == ErrorCode_Success))
+    if (FirstError.Code == ErrorCode_Success)
     {
         FirstError = Result;
+    }
+    else
+    {
+        Error_Deconstruct(&Result);
     }
 
     while (HasNext && (Result.Code == ErrorCode_Success))
@@ -247,32 +254,48 @@ Error BufferPool_Deconstruct(WRBufferPool* self)
             {
                 FirstError = Result;
             }
+            else
+            {
+                Error_Deconstruct(&Result);
+            }
             break;
         }
 
         Pool = EntryView._value;
         Result = ObjectPool_Deconstruct(Pool);
-        if ((Result.Code != ErrorCode_Success) && (FirstError.Code == ErrorCode_Success))
+        if (FirstError.Code == ErrorCode_Success)
         {
             FirstError = Result;
         }
+        else
+        {
+            Error_Deconstruct(&Result);
+        }
 
         Result = CollectionEnumerator_HasNext(Enumerator, &HasNext);
-        if ((Result.Code != ErrorCode_Success) && (FirstError.Code == ErrorCode_Success))
+        if (FirstError.Code == ErrorCode_Success)
         {
             FirstError = Result;
+        }
+        else
+        {
+            Error_Deconstruct(&Result);
         }
     }
 
     if (Enumerator != NULL)
     {
-        CollectionEnumerator_Deconstruct(Enumerator);
+        CollectionEnumerator_Destroy(Enumerator);
     }
 
     Result = HashMap_Deconstruct(&self->_entries);
-    if ((Result.Code != ErrorCode_Success) && (FirstError.Code == ErrorCode_Success))
+    if (FirstError.Code == ErrorCode_Success)
     {
         FirstError = Result;
+    }
+    else
+    {
+        Error_Deconstruct(&Result);
     }
 
     Memory_Zero(self, sizeof(*self));
@@ -310,13 +333,10 @@ Error BufferPool_Borrow(WRBufferPool* self, size_t elementSize, GenericBuffer** 
 
     if (((GenericBuffer*)BorrowedObject)->_elementSize == 0)
     {
-        GenericBuffer_CreateVariable(BorrowedObject,
-            NULL,
-            0,
-            elementSize,
-            0,
-            NULL,
-            NULL);
+        // Initialize a fresh pooled slot as an empty growable buffer: AllocateVariable with zero
+        // initial capacity installs the default growth callback without allocating. Returned
+        // buffers keep their capacity/callback and skip this on reborrow.
+        GenericBuffer_AllocateVariable(BorrowedObject, 0, elementSize);
     }
 
     Result = BufferPool_ResetBorrowedBuffer(BorrowedObject);

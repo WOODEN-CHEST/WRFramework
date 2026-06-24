@@ -295,9 +295,7 @@ static Error LoadTextFromPath(const unsigned char* dataBaseFilePath, GenericBuff
     if (Result.Code != ErrorCode_Success)
     {
         Memory_Free(textBuffer->_data);
-        textBuffer->_data = NULL;
-        textBuffer->_capacity = 0;
-        textBuffer->_count = 0;
+        GenericBuffer_CreateVariable(textBuffer, NULL, 0, sizeof(unsigned char), 0, NULL, NULL);
     }
 
     return Result;
@@ -312,18 +310,14 @@ static Error LoadTextFromStream(IOStream* stream, GenericBuffer* textBuffer)
     if (Result.Code != ErrorCode_Success)
     {
         Memory_Free(textBuffer->_data);
-        textBuffer->_data = NULL;
-        textBuffer->_capacity = 0;
-        textBuffer->_count = 0;
+        GenericBuffer_CreateVariable(textBuffer, NULL, 0, sizeof(unsigned char), 0, NULL, NULL);
         return Result;
     }
 
     if (!GenericBuffer_NullTerminate(textBuffer))
     {
         Memory_Free(textBuffer->_data);
-        textBuffer->_data = NULL;
-        textBuffer->_capacity = 0;
-        textBuffer->_count = 0;
+        GenericBuffer_CreateVariable(textBuffer, NULL, 0, sizeof(unsigned char), 0, NULL, NULL);
         return Error_Construct3(
             ErrorCode_BufferTooSmall,
             u8"Failed to null terminate the Unicode stream text buffer.");

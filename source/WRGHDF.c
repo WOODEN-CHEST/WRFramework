@@ -228,7 +228,7 @@ static size_t GetStringByteCount(GenericBuffer* stringBuffer)
     return stringBuffer->_count;
 }
 
-static HashCode GHDFEntryIDHash(IMap* map, const void* key, void* userData)
+static HashCode GHDFEntryIDHash(IMap* map, const void* key, const UserData* userData)
 {
     const GHDFEntryID* KeyValue = key;
     (void)map;
@@ -507,13 +507,18 @@ static void GHDFCompoundEntryEnumerator_Deconstruct(void* self)
     }
     if (Enumerator->_innerEnumerator != NULL)
     {
-        CollectionEnumerator_Deconstruct(Enumerator->_innerEnumerator);
+        // The outer enumerator is caller-owned, but it owns its inner enumerator (cold path).
+        CollectionEnumerator_Destroy(Enumerator->_innerEnumerator);
     }
-
-    Memory_Free(Enumerator);
 }
 
-static CollectionEnumerator* GHDFCompoundEntryCollection_GetEnumerator(void* self)
+static size_t GHDFCompoundEntryCollection_GetEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(GHDFCompoundEntryEnumerator);
+}
+
+static CollectionEnumerator* GHDFCompoundEntryCollection_InitEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorVTable =
     {
@@ -524,21 +529,20 @@ static CollectionEnumerator* GHDFCompoundEntryCollection_GetEnumerator(void* sel
         ._deconstruct = GHDFCompoundEntryEnumerator_Deconstruct,
     };
     GHDFCompound* Compound = self;
-    GHDFCompoundEntryEnumerator* Enumerator = NULL;
+    GHDFCompoundEntryEnumerator* Enumerator = buffer;
     ICollection* UnderlyingCollection = NULL;
 
-    if (Compound == NULL)
+    if ((Compound == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
     UnderlyingCollection = IMap_AsEntryCollection(HashMap_AsMap(&Compound->_entries));
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
     Enumerator->Base._singleElementSize = sizeof(GHDFCompoundEntry);
     Enumerator->Base._flags = EnumeratorFlags_None;
     Enumerator->Base._vtable = EnumeratorVTable;
     Enumerator->Base._vtable.Self = Enumerator;
-    Enumerator->_innerEnumerator = ICollection_GetEnumerator(UnderlyingCollection);
+    Enumerator->_innerEnumerator = ICollection_CreateEnumerator(UnderlyingCollection);
     return &Enumerator->Base;
 }
 
@@ -599,13 +603,18 @@ static void GHDFCompoundValueEnumerator_Deconstruct(void* self)
     }
     if (Enumerator->_innerEnumerator != NULL)
     {
-        CollectionEnumerator_Deconstruct(Enumerator->_innerEnumerator);
+        // The outer enumerator is caller-owned, but it owns its inner enumerator (cold path).
+        CollectionEnumerator_Destroy(Enumerator->_innerEnumerator);
     }
-
-    Memory_Free(Enumerator);
 }
 
-static CollectionEnumerator* GHDFCompoundValueCollection_GetEnumerator(void* self)
+static size_t GHDFCompoundValueCollection_GetEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(GHDFCompoundValueEnumerator);
+}
+
+static CollectionEnumerator* GHDFCompoundValueCollection_InitEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorVTable =
     {
@@ -616,21 +625,20 @@ static CollectionEnumerator* GHDFCompoundValueCollection_GetEnumerator(void* sel
         ._deconstruct = GHDFCompoundValueEnumerator_Deconstruct,
     };
     GHDFCompound* Compound = self;
-    GHDFCompoundValueEnumerator* Enumerator = NULL;
+    GHDFCompoundValueEnumerator* Enumerator = buffer;
     ICollection* UnderlyingCollection = NULL;
 
-    if (Compound == NULL)
+    if ((Compound == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
     UnderlyingCollection = IMap_AsEntryCollection(HashMap_AsMap(&Compound->_entries));
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
     Enumerator->Base._singleElementSize = sizeof(GHDFObjectValue);
     Enumerator->Base._flags = EnumeratorFlags_None;
     Enumerator->Base._vtable = EnumeratorVTable;
     Enumerator->Base._vtable.Self = Enumerator;
-    Enumerator->_innerEnumerator = ICollection_GetEnumerator(UnderlyingCollection);
+    Enumerator->_innerEnumerator = ICollection_CreateEnumerator(UnderlyingCollection);
     return &Enumerator->Base;
 }
 
@@ -692,17 +700,17 @@ static Error GHDFArrayElementEnumerator_NextByReference(void* self, void** outPo
 
 static void GHDFArrayElementEnumerator_Deconstruct(void* self)
 {
-    GHDFArrayElementEnumerator* Enumerator = self;
-
-    if (Enumerator == NULL)
-    {
-        return;
-    }
-
-    Memory_Free(Enumerator);
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
-static CollectionEnumerator* GHDFArrayElementCollection_GetEnumerator(void* self)
+static size_t GHDFArrayElementCollection_GetEnumeratorSize(void* self)
+{
+    (void)self;
+    return sizeof(GHDFArrayElementEnumerator);
+}
+
+static CollectionEnumerator* GHDFArrayElementCollection_InitEnumerator(void* self, void* buffer)
 {
     static const CollectionEnumeratorVTable EnumeratorVTable =
     {
@@ -713,14 +721,13 @@ static CollectionEnumerator* GHDFArrayElementCollection_GetEnumerator(void* self
         ._deconstruct = GHDFArrayElementEnumerator_Deconstruct,
     };
     GHDFArray* Array = self;
-    GHDFArrayElementEnumerator* Enumerator = NULL;
+    GHDFArrayElementEnumerator* Enumerator = buffer;
 
-    if (Array == NULL)
+    if ((Array == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
 
-    Enumerator = Memory_Allocate(sizeof(*Enumerator));
     Enumerator->Base._singleElementSize = sizeof(GHDFArrayIndexedValue);
     Enumerator->Base._flags = EnumeratorFlags_None;
     Enumerator->Base._vtable = EnumeratorVTable;
@@ -735,12 +742,14 @@ static Error GHDFCompound_Initialize(GHDFCompound* self)
     static const ICollectionVtable EntryCollectionVTable =
     {
         .Self = NULL,
-        ._getEnumerator = GHDFCompoundEntryCollection_GetEnumerator,
+        ._getEnumeratorSize = GHDFCompoundEntryCollection_GetEnumeratorSize,
+        ._initEnumerator = GHDFCompoundEntryCollection_InitEnumerator,
     };
     static const ICollectionVtable ValueCollectionVTable =
     {
         .Self = NULL,
-        ._getEnumerator = GHDFCompoundValueCollection_GetEnumerator,
+        ._getEnumeratorSize = GHDFCompoundValueCollection_GetEnumeratorSize,
+        ._initEnumerator = GHDFCompoundValueCollection_InitEnumerator,
     };
     Error Result = Error_CreateSuccess();
 
@@ -770,7 +779,8 @@ static Error GHDFArray_Initialize(GHDFArray* self)
     static const ICollectionVtable ElementCollectionVTable =
     {
         .Self = NULL,
-        ._getEnumerator = GHDFArrayElementCollection_GetEnumerator,
+        ._getEnumeratorSize = GHDFArrayElementCollection_GetEnumeratorSize,
+        ._initEnumerator = GHDFArrayElementCollection_InitEnumerator,
     };
 
     if (self == NULL)
@@ -942,10 +952,10 @@ static Error GHDFValidateBorrowedArray(GHDFArray* array, GHDFValueType expectedT
     return Error_CreateSuccess();
 }
 
-static Error GHDFStringBuffer_ConstructObject(void* object, void* userData)
+static Error GHDFStringBuffer_ConstructObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     GHDFBorrowToken* Token = NULL;
 
     if (Buffer == NULL)
@@ -961,11 +971,11 @@ static Error GHDFStringBuffer_ConstructObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFStringBuffer_ResetObject(void* object, void* userData)
+static Error GHDFStringBuffer_ResetObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
     GHDFBorrowToken* Token = NULL;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
 
     if (Buffer == NULL)
     {
@@ -987,7 +997,7 @@ static Error GHDFStringBuffer_ResetObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFStringBuffer_DeconstructObject(void* object, void* userData)
+static Error GHDFStringBuffer_DeconstructObject(void* object, const UserData* userData)
 {
     GenericBuffer* Buffer = object;
     (void)userData;
@@ -1003,10 +1013,10 @@ static Error GHDFStringBuffer_DeconstructObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFCompoundPool_ConstructObject(void* object, void* userData)
+static Error GHDFCompoundPool_ConstructObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFCompound_Initialize(Compound);
 
     if (Result.Code != ErrorCode_Success)
@@ -1018,10 +1028,10 @@ static Error GHDFCompoundPool_ConstructObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFArrayPool_ConstructObject(void* object, void* userData)
+static Error GHDFArrayPool_ConstructObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFArray_Initialize(Array);
 
     if (Result.Code != ErrorCode_Success)
@@ -1045,7 +1055,7 @@ static Error GHDFCompound_ClearInternal(GHDFCompound* self)
         return CreateNullArgumentError(u8"self");
     }
 
-    Enumerator = ICollection_GetEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&self->_entries)));
+    Enumerator = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&self->_entries)));
     if (Enumerator != NULL)
     {
         while (true)
@@ -1086,7 +1096,7 @@ static Error GHDFCompound_ClearInternal(GHDFCompound* self)
             }
         }
 
-        CollectionEnumerator_Deconstruct(Enumerator);
+        CollectionEnumerator_Destroy(Enumerator);
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
@@ -1096,10 +1106,10 @@ static Error GHDFCompound_ClearInternal(GHDFCompound* self)
     return IMap_Clear(HashMap_AsMap(&self->_entries));
 }
 
-static Error GHDFCompoundPool_ResetObject(void* object, void* userData)
+static Error GHDFCompoundPool_ResetObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFCompound_ClearInternal(Compound);
 
     if (Result.Code != ErrorCode_Success)
@@ -1112,7 +1122,7 @@ static Error GHDFCompoundPool_ResetObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFCompoundPool_DeconstructObject(void* object, void* userData)
+static Error GHDFCompoundPool_DeconstructObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
     (void)userData;
@@ -1164,10 +1174,10 @@ static Error GHDFArray_ClearInternal(GHDFArray* self)
     return IList_Clear(&self->_values._list);
 }
 
-static Error GHDFArrayPool_ResetObject(void* object, void* userData)
+static Error GHDFArrayPool_ResetObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
-    GHDFObjectPool* Pool = userData;
+    GHDFObjectPool* Pool = UserData_GetPointer(userData);
     Error Result = GHDFArray_ClearInternal(Array);
 
     if (Result.Code != ErrorCode_Success)
@@ -1181,7 +1191,7 @@ static Error GHDFArrayPool_ResetObject(void* object, void* userData)
     return Error_CreateSuccess();
 }
 
-static Error GHDFArrayPool_DeconstructObject(void* object, void* userData)
+static Error GHDFArrayPool_DeconstructObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
     (void)userData;
@@ -1885,7 +1895,7 @@ static Error GHDF_WriteCompoundBody(BinaryIOStream* stream, const GHDFCompound* 
         return Result;
     }
 
-    Enumerator = ICollection_GetEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&MutableCompound->_entries)));
+    Enumerator = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&MutableCompound->_entries)));
     if (Enumerator == NULL)
     {
         return Error_Construct1(ErrorCode_InvalidState,
@@ -1944,7 +1954,7 @@ static Error GHDF_WriteCompoundBody(BinaryIOStream* stream, const GHDFCompound* 
         }
     }
 
-    CollectionEnumerator_Deconstruct(Enumerator);
+    CollectionEnumerator_Destroy(Enumerator);
     return Result;
 }
 
@@ -2219,11 +2229,16 @@ static Error GHDFObjectPool_Construct(GHDFObjectPool* self)
     }
 
     Memory_Zero(self, sizeof(*self));
+
+    // The pools keep a back-pointer to this owner in their UserData so the lifecycle callbacks can
+    // reach it. The address stays valid for every borrow/return/teardown (self outlives the pools).
+    UserData PoolUserData = UserData_FromPointer(self);
+
     Result = ObjectPool_Construct2(&self->_compoundPool,
         sizeof(GHDFCompound),
         GHDF_POOL_SECTION_CAPACITY,
         CompoundLifecycle,
-        self);
+        &PoolUserData);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -2233,7 +2248,7 @@ static Error GHDFObjectPool_Construct(GHDFObjectPool* self)
         sizeof(GHDFArray),
         GHDF_POOL_SECTION_CAPACITY,
         ArrayLifecycle,
-        self);
+        &PoolUserData);
     if (Result.Code != ErrorCode_Success)
     {
         Error CleanupResult = ObjectPool_Deconstruct(&self->_compoundPool);
@@ -2250,7 +2265,7 @@ static Error GHDFObjectPool_Construct(GHDFObjectPool* self)
         sizeof(GenericBuffer),
         GHDF_POOL_SECTION_CAPACITY,
         StringLifecycle,
-        self);
+        &PoolUserData);
     if (Result.Code != ErrorCode_Success)
     {
         Error CleanupResult = ObjectPool_Deconstruct(&self->_arrayPool);

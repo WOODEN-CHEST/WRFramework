@@ -40,39 +40,75 @@ The project is a custom library called WRFramework, it adds extra funcionality w
 The library is split into modules, each one having a header file and each for a specific task.
 The modules are (in alphabetical order):
 - WRArrayList: A generic array list.
+  - Functions: [construct, ensure total capacity, reserve more capacity, get active buffer, deconstruct]
 - WRBinaryIO: Classes and streams for writing and reading binary data.
+  - Functions: [BinaryConverter construct, BinaryConverter set target endianness, BinaryConverter write number, BinaryConverter write boolean, BinaryConverter encode variable-length integer, BinaryConverter read number, BinaryConverter read boolean, BinaryConverter decode variable-length integer, BinaryConverter deconstruct, BinaryIOStream construct, BinaryIOStream set target endianness, BinaryIOStream write number, BinaryIOStream write boolean, BinaryIOStream write encoded integer, BinaryIOStream read number, BinaryIOStream read boolean, BinaryIOStream read encoded integer, BinaryIOStream deconstruct]
 - WRBufferPool: A pool of generic buffers, so they can be reused instead of constantly allocating new ones.
+  - Functions: [construct, borrow, return, deconstruct]
 - WRChar: Utilities for writing and reading UTF-8 and UTF-16 unicode characters.
+  - Functions: [CharUTF8 is char valid, CharUTF8 is char buffer valid, CharUTF8 is codepoint valid, CharUTF8 get byte count of char, CharUTF8 get byte count of char from end, CharUTF8 get byte count of codepoint, CharUTF8 get codepoint, CharUTF8 get codepoint from end, CharUTF8 write codepoint, CharUTF16 is char valid, CharUTF16 is char buffer valid, CharUTF16 is codepoint valid, CharUTF16 get word count of char, CharUTF16 get word count of char from end, CharUTF16 get word count of codepoint, CharUTF16 get codepoint, CharUTF16 get codepoint from end, CharUTF16 write codepoint]
 - WRCollection: Basically Java's ICollection or C#'s IEnumerable interfaces.
+  - Functions: [ICollection get enumerator size, ICollection init enumerator, ICollection create enumerator, ICollection write to buffer by value, ICollection write to buffer by reference, CollectionEnumerator has next, CollectionEnumerator get single element size, CollectionEnumerator next by value, CollectionEnumerator next by reference, CollectionEnumerator is reference-returning supported, CollectionEnumerator deconstruct, CollectionEnumerator destroy]
 - WRComparator: Generic object comparison operations like in Java.
+  - Functions: [compare number, compare string]
 - WRCompile: Random compiling utils, like a macro which marks a parameter as unused.
+  - Functions: none (provides only the UNUSED macro)
 - WREnvironment: Environment properties of the host machine, like newline, directory sperator, endianess, etc.
+  - Functions: [get endianness]
 - WRError: Exception like errors and their handling functions.
+  - Functions: [create success, construct, deconstruct]
 - WREvent: An event class which can be subscribed, unsubscribed and listened to. Use this for events.
+  - Functions: [construct, deconstruct, subscribe, unsubscribe, unsubscribe all, get subscriber count, raise, get handler event args, get subscriber user data]
 - WRFileStream: An IOStream for file system files (used in place of FILE*).
+  - Functions: [as IO stream, construct from handle, deconstruct]
 - WRFileSystem: File system operations, like opening file streams, iterating files, getting file system entry properties, etc.
+  - Functions: [get entries, get files, get directories, get entry info, create directory, create all directories, create file, open file stream, read all text, read all bytes, write all text, write all bytes, delete entry, move entry, rename entry, directory entry enumerator has next, directory entry enumerator next, directory entry enumerator deconstruct, entry info deconstruct]
 - WRGHDF: A binary file format to store data in, like game saves and such. Used for saving binary data to the disk.
+  - Functions: [GHDF write document, GHDF read document, GHDF create regular type, GHDF create array type, GHDFObjectValue create value, GHDFCompound set value, GHDFCompound get, GHDFCompound get optional, GHDFCompound get verified, GHDFCompound get optional verified, GHDFCompound remove, GHDFCompound clear, GHDFCompound get entry count, GHDFCompound get entry collection, GHDFCompound get value collection, GHDFCompound get key collection, GHDFArray add value, GHDFArray insert value, GHDFArray replace value, GHDFArray remove at, GHDFArray get, GHDFArray clear, GHDFArray copy raw bytes, GHDFArray get element count, GHDFArray get element type, GHDFArray get element collection, GHDFObjectPool create, GHDFObjectPool borrow object, GHDFObjectPool return object, GHDFObjectPool deconstruct]
 - WRHash: Hashcode creation functions.
+  - Functions: [hash string, hash bytes, hash pointer, hash number]
 - WRHashMap: A generic map data structure.
+  - Functions: [construct, deconstruct, as map, create default options]
 - WRInt32Vector: 32bit integer vector.
+  - Functions: none (defines only the Int32Vector struct)
 - WRIO: IO streams like in C# and Java.
+  - Functions: [get position, set position, seek to start or end, move position, set length, flush, write byte, write bytes, write string, read byte, read bytes, read all, get total size, get remaining size, is seekable, is writable, is readable, is length-settable, is end of stream, close, deconstruct]
 - WRJSON: JSON reading, writing and handling.
+  - Functions: [JSON serialize, JSON deserialize, JSONObjectValue create value, JSONCompound set, JSONCompound get, JSONCompound get optional, JSONCompound get verified, JSONCompound get optional verified, JSONCompound remove, JSONCompound clear, JSONCompound get entry count, JSONCompound get entry collection, JSONCompound get value collection, JSONCompound get key collection, JSONArray add, JSONArray insert, JSONArray replace, JSONArray remove at, JSONArray get, JSONArray get optional, JSONArray get verified, JSONArray get optional verified, JSONArray clear, JSONArray get element count, JSONArray get element collection, JSONObjectPool create, JSONObjectPool borrow object, JSONObjectPool return object, JSONObjectPool deconstruct]
 - WRList: An interface for lists.
+  - Functions: [as collection, get enumerator size, init enumerator, create enumerator, get element count, get element size, get flags, is read-only, add last, add first, insert, remove first, remove last, remove at, replace, add range last, add range first, insert range, remove range, replace range, clear, get element, get pointer to element, get first, get last, get scratch size, sort ascending, sort descending, reverse, filter, map, sum, max, min, contains, count where, first index of, last index of, copy to, deconstruct]
 - WRMap: An interface for maps.
+  - Functions: [get key size, get value size, get entry collection view, get key collection view, get value collection view, get entry count, get flags, is read-only, get element, get pointer to element, add or update, remove, clear, contains key, contains value, deconstruct, default key comparator, default value comparator]
 - WRMath: Various math utilities for scalar values.
+  - Functions: [remainder, power, log base-10, log base-2, natural log, log arbitrary base, square root, cube root, nth root, sine, cosine, tangent, arcsine, arccosine, arctangent, arctangent of two components, hyperbolic sine, hyperbolic cosine, hyperbolic tangent, inverse hyperbolic sine, inverse hyperbolic cosine, inverse hyperbolic tangent, ceiling, floor, round, truncate, split integral and fractional parts, is NaN, is infinity, is positive infinity, is negative infinity, min, max, clamp, absolute value, sign, lerp, degrees to radians, radians to degrees, equals within tolerance, normalize to unit range, map between ranges, create rounding options]
 - WRMemory: Memory management functions, buffer management functions.
+  - Functions: [GenericBuffer create variable, GenericBuffer allocate variable, GenericBuffer create constant, GenericBuffer create read-only, GenericBuffer set callback, GenericBuffer clear callback, GenericBuffer ensure total capacity, GenericBuffer reserve more capacity, GenericBuffer get capacity remaining, GenericBuffer is read-only, GenericBuffer is fixed-capacity, GenericBuffer add last, GenericBuffer add first, GenericBuffer insert, GenericBuffer replace, GenericBuffer remove at, GenericBuffer remove first, GenericBuffer remove last, GenericBuffer add last range, GenericBuffer add first range, GenericBuffer insert range, GenericBuffer replace range, GenericBuffer remove range, GenericBuffer get pointer to element, GenericBuffer get pointer to first, GenericBuffer get pointer to last, GenericBuffer get at, GenericBuffer get first, GenericBuffer get last, GenericBuffer clear, GenericBuffer contains, GenericBuffer first index of, GenericBuffer last index of, GenericBuffer get sort scratch size, GenericBuffer reverse, GenericBuffer sort ascending, GenericBuffer sort descending, GenericBuffer filter, GenericBuffer map, GenericBuffer sum, GenericBuffer max, GenericBuffer min, GenericBuffer count where, GenericBuffer append byte, GenericBuffer append range bytes, GenericBuffer append string, GenericBuffer null-terminate, GenericBuffer set byte, GenericBuffer prepare for manual mutation, GenericBuffer set count, GenericBuffer commit count, GenericBuffer get writable tail, Memory allocate, Memory reallocate, Memory free, Memory set, Memory zero, Memory is equal, Memory copy, Memory move, Memory try multiply size, Memory try add size, Memory try grow capacity, Memory get total allocation count, Memory get total reallocation count, Memory get total free count, Memory get current allocation count]
 - WRMemoryStream: An IO stream which is backed by memory, not a socket or on the disk.
+  - Functions: [as IO stream, construct, get backing buffer, set length, deconstruct]
 - WRNumber: Number conversions from and to strings with advanced options.
+  - Functions: [parse integer, format integer, parse float, format float, parse double, format double, create decimal format options]
 - WRObjectPool: A generic object pool where objects can be borrowed and returned, used to avoid constant allocations.
+  - Functions: [construct, deconstruct, get element size, get section capacity, borrow object, return object, clear]
 - WRPath: File system path functionality and management.
+  - Functions: [change extension, remove extension, get extension, has extension, combine, append, ends in separator, get parent path, get last entry name, get last entry stem, is entry name valid, validate entry name, is valid, validate, get path type, normalize, is normalized, is rooted, is fully qualified, get root, is sub path, trim trailing separator, ensure trailing separator, contains directory segments, split]
 - WRRandom: A random number generator.
+  - Functions: [construct, deconstruct, next int32, next int32 in limit, next int32 in range, next int64, next int64 in limit, next int64 in range, next float, next double, next bool, next raw value, get state, set state]
 - WRSocket: Sockets for networking operations.
+  - Functions: [SocketAddress parse from string, SocketAddress resolve from hostname, SocketAddress get IP, SocketAddress get port, SocketAddress get family, SocketAddress deconstruct, TcpListener create and listen, TcpListener accept connection, TcpListener get local address, TcpListener deconstruct, TcpSocket connect, TcpSocket get IO stream, TcpSocket get local address, TcpSocket get remote address, TcpSocket set receive timeout, TcpSocket set send timeout, TcpSocket shutdown, TcpSocket deconstruct, UdpSocket create, UdpSocket bind, UdpSocket send datagram, UdpSocket receive datagram, UdpSocket set receive timeout, UdpSocket deconstruct]
 - WRStandardStream: IO streams for stdin, stdout and stderr.
+  - Functions: [as IO stream, create from standard input/output/error, deconstruct]
 - WRString: String operations.
+  - Functions: [validate encoding, are codepoints defined, is null or empty, is null or whitespace, to lower, to upper, invert case, get byte length, get codepoint length, equals, equals exact, copy to, split, index of, concat, contains, count occurrences, ends with, starts with, format, join, replace, substring, trim, get trim indices, compare, remove, insert, reverse, repeat, get character index array, create split options, create index options]
 - WRStringBuilder: A stringbuilder class.
+  - Functions: [construct, deconstruct, append string, append string from builder, append substring, append code point, append integer, append float, append double, append boolean, insert string, insert string from builder, insert substring, insert code point, insert integer, insert float, insert double, insert boolean, remove range, truncate, get length, ensure total capacity, reserve more capacity, get backing string, copy to]
 - WRThread: Threading operations and functionality.
+  - Functions: [Thread create, Thread join, Thread is running, Thread sleep current, Thread get current, Thread deconstruct, Mutex create, Mutex lock, Mutex try lock, Mutex release, Mutex deconstruct, ConditionVariable create, ConditionVariable wait, ConditionVariable wait with timeout, ConditionVariable signal, ConditionVariable broadcast, ConditionVariable deconstruct, ReadWriteLock create, ReadWriteLock lock for read, ReadWriteLock lock for write, ReadWriteLock release read, ReadWriteLock release write, ReadWriteLock deconstruct]
 - WRUnicode: Unicode funcionality (including converting and testing codepoints).
+  - Functions: [to lower, to upper, is letter, is digit, is number, get numeric value, is symbol, is mark, is separator, is whitespace, is punctuation, is upper, is lower, is cased, is ASCII, is ASCII letter, is ASCII digit, is control, is other category, equals ignoring case, get category, is defined]
 - WRUnicodeLoader: Class to load unicode data from a UnicodeData.txt database.
+  - Functions: [create empty, load from file, load from stream, deconstruct]
+- WRUserData: A fixed 128-byte value type for caller-attached data (holds either a pointer or a small inline value). Header-only.
+  - Functions: [create empty, from pointer, get pointer]
 
 Where the framework uses interfaces or abstract classes, it is generally recommended to pass around the non-concrete type
 rather than the concrete one. For storing the object in a variable or struct member, it's context dependent, as
@@ -306,6 +342,18 @@ void List_Append(List* self, int value);
   use the generic buffer's TryPrepareForManualMutation, it handles all constraints, ensure the capacity and only
   returns true if the buffer can be mutated in the requested context. Reading from the generic buffer directly
   without its methods is fine, however.
+- After a manual write, NEVER assign `buffer->_count` (or `_data`/`_capacity`) directly. Use
+  `GenericBuffer_SetCount`, `GenericBuffer_CommitCount` (add N to the count), or `GenericBuffer_GetWritableTail`
+  (reserve + get the write pointer, pair with CommitCount). These validate read-only/capacity; direct field
+  writes bypass the invariants. To construct an empty buffer, use the constructors, not hand-set fields.
+- For size arithmetic that feeds an allocation (count * elementSize, capacity doubling, etc.), use the checked
+  helpers `Memory_TryMultiplySize` / `Memory_TryAddSize` / `Memory_TryGrowCapacity` so overflow can't wrap.
+- `GenericBuffer_Insert`/`InsertRange` are safe even when the source aliases the buffer's own storage
+  (self-append, internal slices) — no need to copy the element out first.
+- Scan/sort/reduce helpers on `IList` and `GenericBuffer` (sort, reverse, filter, etc.) come in two forms:
+  the plain form takes a caller-owned scratch buffer (size from `IList_GetScratchSize` /
+  `GenericBuffer_GetSortScratchSize`) and does NOT allocate per call — PREFER THIS, reusing one scratch buffer.
+  The `...Allocating` form allocates the scratch for you; use it only when you would have to allocate anyway.
 - Functions which write to a generic buffer should NOT clear the buffer beforehand, that is the responsibility of the
   caller of said function.
 - This rule is strict: do not call `GenericBuffer_Clear` inside a function just because that function writes to a
@@ -336,6 +384,11 @@ should also be null. If the error code is not success, there may be a pointer to
 at least remember to deconstruct it to free any used memory by it.
 - Functions that can return errors always have errors as their return value rather than writing to a pointer which
 points to an error object.
+- **Best-effort teardown / cleanup loops:** when a destructor frees several resources and more than one can
+  fail, do NOT overwrite the error variable each iteration (that leaks the previous message) and do NOT
+  early-return on the first failure (that abandons the rest). Keep the first error and `Error_Deconstruct` every
+  later one, or accumulate them; either way, free every resource. Also do not read `.Code` off a temporary
+  `Error` return value without deconstructing it — capture it in a variable first.
 ---
 
 ## Raylib and Header Hygiene
@@ -371,6 +424,34 @@ should be done by extracting its codepoint and testing that, and writing it same
 - If you're dealing with UTF-16 strings (in Windows, for example), then use uint16_t as the unit type for them. However,
 generally you should be trying to make sure the project uses UTF-8, whatever API gave UTF-16 strings should have the strings
 in usage converted to UTF-8.
+- **String writers treat the destination as one growing string.** Functions like `StringUTF8_CopyTo`, `Concat`,
+  `ToLower`, `Replace`, etc. drop an existing trailing null terminator before appending, so composing into the
+  same buffer repeatedly yields one continuous string (not `"a\0b\0"`). Raw byte appends
+  (`GenericBuffer_AppendByte`/`AppendRangeBytes`) and `StringUTF8_Split` are unaffected — Split still builds a
+  sequence of null-terminated records, addressed by the offsets it returns.
+
+
+---
+
+## Framework behavior notes
+
+- **Split returns offsets, not pointers.** `StringUTF8_Split` and `Path_Split` append segment bytes to a string
+  buffer and write each segment's byte offset into a `size_t` index buffer. Recover a segment with
+  `stringBuffer->_data + offset`. (They used to return raw pointers, which dangle when the buffer grows.)
+- **Events are reentrant.** A `WREvent` handler may raise the same event again; `WREvent_Raise` snapshots
+  subscribers onto a per-raise frame, so recursion is safe. Events are still not thread-safe.
+- **Collection enumerators are caller-owned.** `ICollection` exposes `ICollection_GetEnumeratorSize` and
+  `ICollection_InitEnumerator(buffer)`: query the size, supply a (reusable or stack) buffer at least that big
+  and suitably aligned, iterate, then `CollectionEnumerator_Deconstruct` (which does NOT free the buffer). The
+  buffer must outlive the enumerator. `ICollection_CreateEnumerator` + `CollectionEnumerator_Destroy` are the
+  allocating convenience pair. (The filesystem `DirectoryEntryEnumerator` is a separate API and is unchanged.)
+- **WRUserData** is the vehicle for caller-attached "user data" across the framework — events, threads, object
+  pools, hash maps (hash + comparators), and the GenericBuffer/IList scan callbacks all take it. Pass a
+  `const UserData*` to callbacks/helpers that use it immediately; structs that must retain it (event
+  subscribers, threads, object pools, hash maps) store a `UserData` by value and hand the callback a pointer to
+  the stored copy. Never pass the 128-byte struct by value as a function argument. The `GenericBuffer`
+  growth-callback context stays a plain `void*` (internal allocator plumbing embedded in every buffer, not a
+  user-facing callback).
 
 
 ---
