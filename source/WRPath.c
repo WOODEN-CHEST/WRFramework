@@ -1149,21 +1149,19 @@ static Error MeasureSplitRequirements(const unsigned char* path,
 
 static Error EnsureSplitBufferCapacity(GenericBuffer* strBuffer, GenericBuffer* segmentIndexBuffer, size_t segmentCount, size_t totalStringBytes)
 {
-    Error Result = EnsureByteBufferCapacity(strBuffer, totalStringBytes, u8"split the path");
-    size_t AddedSegmentCount = 0;
-
-    if (Result.Code != ErrorCode_Success)
-    {
-        return Result;
-    }
-    if (segmentCount > segmentIndexBuffer->_count)
-    {
-        AddedSegmentCount = segmentCount - segmentIndexBuffer->_count;
-    }
-    if (!GenericBuffer_TryPrepareForManualMutation(segmentIndexBuffer, AddedSegmentCount))
+    // Split appends to the destinations, so reserve room for the new data on top of any existing
+    // contents. TryPrepareForManualMutation reserves relative to the current count and reports
+    // failure (including on size_t overflow) by returning false.
+    if (!GenericBuffer_TryPrepareForManualMutation(strBuffer, totalStringBytes))
     {
         return Error_Construct3(ErrorCode_BufferTooSmall,
-            u8"Cannot split the path because the segment index buffer requires at least %zu elements of capacity.",
+            u8"Cannot split the path because the destination buffer requires at least %zu additional bytes of capacity.",
+            totalStringBytes);
+    }
+    if (!GenericBuffer_TryPrepareForManualMutation(segmentIndexBuffer, segmentCount))
+    {
+        return Error_Construct3(ErrorCode_BufferTooSmall,
+            u8"Cannot split the path because the segment index buffer requires at least %zu additional elements of capacity.",
             segmentCount);
     }
 
@@ -1176,8 +1174,8 @@ static void WriteSplitBuffers(const unsigned char* path,
     GenericBuffer* segmentIndexBuffer)
 {
     size_t Index = startIndex;
-    size_t StringWriteIndex = 0;
-    size_t IndexWriteIndex = 0;
+    size_t StringWriteIndex = strBuffer->_count;
+    size_t IndexWriteIndex = segmentIndexBuffer->_count;
     PathSegmentView Segment;
 
     while (TryGetNextSegmentView(path, &Index, &Segment))

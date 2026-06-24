@@ -410,10 +410,11 @@ bool Path_ContainsDirectorySegments(const unsigned char* path);
  *
  * Both destinations are populated together: on success @p strBuffer holds the concatenated
  * null-terminated segment strings and @p segmentIndexBuffer holds one offset per segment, with each
- * buffer's count set to the number of bytes / segments written respectively. Unlike the string-writer
- * helpers used elsewhere in this module, this function writes segments at the buffer's current data
- * region rather than appending after a dropped terminator, so any prior contents of the destination
- * buffers are not preserved. A path with no segments beyond the root leaves both buffers empty.
+ * buffer's count grown by the number of bytes / segments written respectively. The new data is
+ * appended after any prior contents of the destination buffers, which are preserved, so callers may
+ * accumulate the segments of several paths across multiple calls; each recorded offset indexes from
+ * the start of @p strBuffer's data and so stays valid for `strBuffer->_data + offset` regardless of
+ * what came before. A path with no segments beyond the root leaves both buffers unchanged.
  * @param path Source path, UTF-8, must not be NULL or empty and must be a valid path.
  * @param strBuffer [out] Destination byte buffer (element size 1). Receives the segment bytes as
  *        consecutive null-terminated UTF-8 strings. Must not be NULL.
