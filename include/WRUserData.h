@@ -30,9 +30,18 @@
 
 
 // Types.
+/**
+ * @brief A fixed 128-byte caller-attached value with overlapping views of its storage.
+ *
+ * A union providing several ways to read/write the same inline storage: as a raw byte array, as a
+ * single pointer, or (for the alignment member) as suitably aligned scratch. Owns nothing; copying
+ * is a plain byte copy and there is no destructor. See the file-level comment for passing/lifetime rules.
+ */
 typedef union UserDataUnion
 {
+    /** @brief The inline storage viewed as raw bytes; write here to store a small value inline. */
     unsigned char Bytes[USER_DATA_BYTE_COUNT];
+    /** @brief The storage viewed as a single pointer; use when the real data lives elsewhere. */
     void* Pointer;
     max_align_t _alignment; // Forces alignment suitable for any value stored inline; never read directly.
 } UserData;
@@ -40,13 +49,25 @@ typedef union UserDataUnion
 
 // Functions.
 
-/* Returns a zero-initialized UserData (all bytes zero, pointer NULL). */
+/**
+ * @brief Returns a zero-initialized UserData.
+ *
+ * All bytes are zero, which also means the pointer view is NULL.
+ * @returns A UserData whose storage is entirely zeroed.
+ */
 static inline UserData UserData_CreateEmpty(void)
 {
     return (UserData){ 0 };
 }
 
-/* Returns a UserData that holds a single pointer; all remaining bytes are zero. */
+/**
+ * @brief Returns a UserData that holds a single pointer.
+ *
+ * Stores the pointer in the pointer view; all remaining bytes are zero. Ownership of the pointee
+ * is unchanged and remains the caller's responsibility.
+ * @param pointer The pointer to store. May be NULL.
+ * @returns A UserData whose pointer view is the given pointer and whose other bytes are zero.
+ */
 static inline UserData UserData_FromPointer(void* pointer)
 {
     UserData Data = { 0 };
@@ -54,7 +75,15 @@ static inline UserData UserData_FromPointer(void* pointer)
     return Data;
 }
 
-/* Returns the pointer stored in the UserData. Only meaningful if the data was set via a pointer. */
+/**
+ * @brief Returns the pointer stored in the UserData.
+ *
+ * Reads the pointer view of the storage. Only meaningful if the value was created/written as a
+ * pointer (e.g. via UserData_FromPointer); reading it after storing unrelated inline bytes yields
+ * an unspecified pointer.
+ * @param self The UserData to read. Must not be NULL.
+ * @returns The pointer stored in the UserData's pointer view.
+ */
 static inline void* UserData_GetPointer(const UserData* self)
 {
     return self->Pointer;
