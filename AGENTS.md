@@ -69,6 +69,8 @@ The modules are (in alphabetical order):
   - Functions: [hash string, hash bytes, hash pointer, hash number]
 - WRHashMap: A generic map data structure.
   - Functions: [construct, deconstruct, as map, create default options]
+- WRHashSet: An open-addressing hash set of distinct fixed-size elements (stored by value in one contiguous block), driven by caller-supplied hash and comparison callbacks. Implements the ISet interface.
+  - Functions: [create default options, as set, construct, deconstruct]
 - WRInt32Vector: 32bit integer vector.
   - Functions: none (defines only the Int32Vector struct)
 - WRIO: IO streams like in C# and Java.
@@ -97,6 +99,8 @@ The modules are (in alphabetical order):
   - Functions: [construct, deconstruct, set random, ensure total capacity, add, add range, remove at, clear, set items, get item, get next, reshuffle, get element count, get element size, as collection]
 - WRRandomWeightedCollection: A collection of items with attached weights (finite doubles >= 0.0) supporting weighted random picking via a caller-supplied RNG. Optimized for fill-once-pick-many usage (alias method: O(1) picks, lazy O(n) table rebuild after mutations); the ICollection view enumerates items in insertion order without randomness.
   - Functions: [construct, deconstruct, add, add range, remove at, clear, set items, get item, get pointer to item, get weight, set weight, get random index, get random item, get random item pointer, get element count, get element size, get total weight, as collection]
+- WRSet: An interface for sets (unordered collections of distinct fixed-size elements), like C#'s ISet, plus generic set-algebra functions that work on any ISet implementation.
+  - Functions: [get element size, default element comparator, as collection, get element count, get flags, is read-only, add, remove, clear, contains, deconstruct, union with, except with, intersect with, symmetric except with, overlaps, is subset of, is superset of, set equals]
 - WRShuffle: Uniform (Fisher-Yates) in-place shuffling of element containers using a caller-supplied RNG.
   - Functions: [shuffle list, shuffle buffer]
 - WRSocket: Sockets for networking operations.
@@ -486,9 +490,29 @@ a macro will be fine.
 ---
 
 ## Documentation
-- If needed, add header level or function level documentation or comments (in headers) for things that may not be
-super obvious or where the details could be misinterpreted. Header level documentation about how the given module
-is supposed to be used is useful too.
+Documentation in public headers is MANDATORY. Every public member declared in a header file — functions, structs,
+struct fields, unions, enums, enum constants, typedefs, function-pointer types, and macros — must have a
+documentation comment. The only exception is a member so trivially obvious that documentation would add nothing;
+this exception is rare, so when in doubt, document. Private members (static functions and anything else confined
+to implementation files) do not require documentation; document them only where they are non-obvious.
+
+Documentation style (self-contained description — do not assume access to other documented files as reference):
+- Use Doxygen-style block comments (`/** ... */`) placed directly above the member they describe.
+- Functions: start with a `@brief` one-sentence summary. Where useful, follow with a paragraph explaining the
+  semantics and contracts: pointer ownership (owned vs borrowed), lifetime and invalidation rules, allocation
+  behavior, complexity on hot paths, thread-safety, and NULL handling. Then write one `@param` per parameter
+  (mark output parameters with `[out]`, state NULL rules and minimum buffer sizes) and a `@returns` describing
+  the success result and every raised ErrorCode together with what triggers it. If the function forwards errors
+  from callees, add: `@note May propagate errors from internal calls; consult the documentation of called
+  functions for the full set.`
+- Types (structs, enums, unions, typedefs, function-pointer types): a `@brief` plus, where useful, a paragraph
+  covering how the type is created, used, and released (constructor/deconstructor pairing, mutability,
+  thread-safety). Function-pointer types document their parameters and return value like functions, and state
+  the contract an implementation must satisfy.
+- Struct fields and enum constants: a short `/** @brief ... */` per member stating what it is and any
+  constraints (units such as bytes vs elements, valid ranges, ownership, when the field is valid).
+- Module headers: where a module's intended usage is not obvious from its functions alone, add a header-level
+  comment block near the top of the file explaining what the module provides and how it is meant to be used.
 
 ---
 
