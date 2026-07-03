@@ -15,11 +15,13 @@ static Error CreateNullArgumentError(const unsigned char* argumentName)
         argumentName);
 }
 
+#if SIZE_MAX > INT64_MAX
 static Error CreateTooManyElementsError(void)
 {
     return Error_Construct1(ErrorCode_ArgumentOutOfRange,
         u8"The container has more elements than the shuffle can index.");
 }
+#endif
 
 static void ShuffleBufferElements(GenericBuffer* buffer, Random* rng, void* swapScratch)
 {
@@ -108,10 +110,12 @@ Error Shuffle_List(IList* list, Random* rng)
         return Error_Construct1(ErrorCode_InvalidOperation,
             u8"Cannot shuffle a read-only list.");
     }
+#if SIZE_MAX > INT64_MAX
     if ((uint64_t)IList_GetElementCount(list) > (uint64_t)INT64_MAX)
     {
         return CreateTooManyElementsError();
     }
+#endif
 
     ElementSize = IList_GetElementSize(list);
     if (!Memory_TryMultiplySize(ElementSize, 2, &ScratchSize))
@@ -150,10 +154,12 @@ Error Shuffle_Buffer(GenericBuffer* buffer, Random* rng)
     {
         return Error_CreateSuccess();
     }
+#if SIZE_MAX > INT64_MAX
     if ((uint64_t)buffer->_count > (uint64_t)INT64_MAX)
     {
         return CreateTooManyElementsError();
     }
+#endif
     if (!GenericBuffer_TryPrepareForManualMutation(buffer, 0))
     {
         return Error_Construct1(ErrorCode_InvalidOperation,
