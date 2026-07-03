@@ -3,6 +3,7 @@
 #if defined(_WIN32)
 
 #include <limits.h>
+#include <stdint.h>
 
 
 // Macros.
@@ -24,20 +25,24 @@ static Error CreateWin32Error(const unsigned char* operationName, DWORD nativeEr
         (unsigned long)nativeError);
 }
 
+#if SIZE_MAX > MAXDWORD
 static Error CreateRangeError(const unsigned char* operationName)
 {
     return Error_Construct3(ErrorCode_ArgumentOutOfRange,
         u8"Windows thread operation \"%s\" exceeded the supported range.",
         operationName);
 }
+#endif
 
 static DWORD ConvertTimeout(size_t milliseconds, Error* outError)
 {
-    if (milliseconds > (size_t)DWORD_MAX)
+#if SIZE_MAX > MAXDWORD
+    if (milliseconds > (size_t)MAXDWORD)
     {
         *outError = CreateRangeError(u8"convert timeout");
         return 0;
     }
+#endif
 
     *outError = Error_CreateSuccess();
     return (DWORD)milliseconds;

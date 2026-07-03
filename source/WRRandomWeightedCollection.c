@@ -514,11 +514,13 @@ Error RandomWeightedCollection_GetRandomIndex(RandomWeightedCollection* self, Ra
         return Error_Construct1(ErrorCode_InvalidOperation,
             u8"Cannot pick a random item from an empty weighted collection.");
     }
+#if SIZE_MAX > INT64_MAX
     if ((uint64_t)ElementCount > (uint64_t)INT64_MAX)
     {
         return Error_Construct1(ErrorCode_InvalidOperation,
             u8"The weighted collection has more elements than a pick can index.");
     }
+#endif
 
     if (!self->_isAliasTableValid)
     {
