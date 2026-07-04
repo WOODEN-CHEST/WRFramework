@@ -88,6 +88,15 @@ static size_t GetStringLength(const unsigned char* text)
     return StringUTF8_GetByteLength(text);
 }
 
+static bool IsCurrentOrParentDirectorySegment(const unsigned char* segment)
+{
+    if ((segment[0] == u8'.') && (segment[1] == 0))
+    {
+        return true;
+    }
+    return (segment[0] == u8'.') && (segment[1] == u8'.') && (segment[2] == 0);
+}
+
 static Error CreateNullArgumentError(const unsigned char* argumentName)
 {
     return Error_Construct3(ErrorCode_IllegalArgument,
@@ -811,19 +820,38 @@ Error FileSystem_CreateAllDirectories(const unsigned char* path)
 
     for (size_t Index = 0; Index < SegmentCount; Index++)
     {
-        Result = Path_Append((const unsigned char*)PrefixPathBuffer._data,
-            (const unsigned char*)SegmentStringBuffer._data + SegmentOffsets[Index],
-            &PrefixPathBuffer);
-        if (Result.Code != ErrorCode_Success)
+        const unsigned char* Segment = (const unsigned char*)SegmentStringBuffer._data + SegmentOffsets[Index];
+
+        if (PrefixPathBuffer._count == 0)
         {
-            Memory_Free(PrefixPathBuffer._data);
-            Memory_Free(SegmentStringBuffer._data);
-            Memory_Free(SegmentIndexBuffer._data);
-            Memory_Free(RootBuffer._data);
-            return Result;
+            // A relative path has no root, so the prefix is still empty on the first segment. Path_Append
+            // rejects an empty first path, so seed the prefix directly with this segment instead.
+            if (!GenericBuffer_AppendString(&PrefixPathBuffer, Segment)
+                || !GenericBuffer_NullTerminate(&PrefixPathBuffer))
+            {
+                Memory_Free(PrefixPathBuffer._data);
+                Memory_Free(SegmentStringBuffer._data);
+                Memory_Free(SegmentIndexBuffer._data);
+                Memory_Free(RootBuffer._data);
+                return CreateBufferTooSmallError(u8"create the directory chain", GetStringLength(Segment) + 1);
+            }
         }
-        if (Path_ContainsDirectorySegments((const unsigned char*)PrefixPathBuffer._data))
+        else
         {
+            Result = Path_Append((const unsigned char*)PrefixPathBuffer._data, Segment, &PrefixPathBuffer);
+            if (Result.Code != ErrorCode_Success)
+            {
+                Memory_Free(PrefixPathBuffer._data);
+                Memory_Free(SegmentStringBuffer._data);
+                Memory_Free(SegmentIndexBuffer._data);
+                Memory_Free(RootBuffer._data);
+                return Result;
+            }
+        }
+        if (IsCurrentOrParentDirectorySegment(Segment))
+        {
+            // "." / ".." are not directories to create; the prefix keeps them so the remaining
+            // segments resolve relative to them.
             continue;
         }
 
