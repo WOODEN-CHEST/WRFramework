@@ -7,13 +7,12 @@
 
 #include "WRDateTime.h"
 #include "WRCompile.h"
-
-#if defined(__linux__)
 #include <time.h>
-#elif defined(_WIN32)
+
+#if defined(_WIN32)
 #define WIN32_LEAN_AND_MEAN
 #include <windows.h>
-#else
+#elif !defined(__linux__)
 #error "WRDateTime is only supported on Linux and Windows."
 #endif
 
@@ -21,6 +20,12 @@
 // Macros.
 #define NANOSECONDS_PER_MILLISECOND 1000000L
 #define TM_YEAR_EPOCH 1900
+#define SECONDS_PER_DAY 86400
+#define SECONDS_PER_HOUR 3600
+#define SECONDS_PER_MINUTE 60
+#define DAYS_PER_WEEK 7
+// 1970-01-01 (the Unix epoch) fell on a Thursday, which is index 4 in the Sunday-based DayOfWeek.
+#define EPOCH_WEEKDAY 4
 #define YEAR_MIN_DIGITS 4
 #define MONTH_DIGITS 2
 #define DAY_DIGITS 2
@@ -128,6 +133,125 @@ static bool AppendPaddedNumber(GenericBuffer* buffer, int32_t value, int32_t min
 }
 
 
+// Number of days from 1970-01-01 to the given proleptic-Gregorian date, and its inverse. Both use
+// Howard Hinnant's public-domain civil-from/to-days algorithms; the constants are intrinsic to that
+// method (146097 days per 400-year era, 719468 days between 0000-03-01 and 1970-01-01, etc.).
+static int64_t DaysFromCivil(int64_t year, int32_t month, int32_t day)
+{
+    int64_t ShiftedYear = year - (month <= 2);
+    int64_t Era = (ShiftedYear >= 0 ? ShiftedYear : ShiftedYear - 399) / 400;
+    int64_t YearOfEra = ShiftedYear - (Era * 400);
+    int64_t DayOfYear = ((153 * (month + (month > 2 ? -3 : 9)) + 2) / 5) + day - 1;
+    int64_t DayOfEra = (YearOfEra * 365) + (YearOfEra / 4) - (YearOfEra / 100) + DayOfYear;
+    return (Era * 146097) + DayOfEra - 719468;
+}
+
+static void CivilFromDays(int64_t days, int32_t* outYear, int32_t* outMonth, int32_t* outDay)
+{
+    int64_t ShiftedDays = days + 719468;
+    int64_t Era = (ShiftedDays >= 0 ? ShiftedDays : ShiftedDays - 146096) / 146097;
+    int64_t DayOfEra = ShiftedDays - (Era * 146097);
+    int64_t YearOfEra = (DayOfEra - (DayOfEra / 1460) + (DayOfEra / 36524) - (DayOfEra / 146096)) / 365;
+    int64_t DayOfYear = DayOfEra - ((365 * YearOfEra) + (YearOfEra / 4) - (YearOfEra / 100));
+    int64_t MonthIndex = ((5 * DayOfYear) + 2) / 153;
+    int64_t Day = DayOfYear - (((153 * MonthIndex) + 2) / 5) + 1;
+    int64_t Month = MonthIndex + (MonthIndex < 10 ? 3 : -9);
+    int64_t Year = YearOfEra + (Era * 400) + (Month <= 2);
+
+    *outYear = (int32_t)Year;
+    *outMonth = (int32_t)Month;
+    *outDay = (int32_t)Day;
+}
+
+static DateTime UtcDateTimeFromEpoch(int64_t unixSeconds)
+{
+    DateTime Result;
+    int64_t Days = unixSeconds / SECONDS_PER_DAY;
+    int64_t SecondsOfDay = unixSeconds % SECONDS_PER_DAY;
+    int64_t Weekday = 0;
+
+    // C truncates toward zero; shift to floor division so pre-epoch instants land on the right day.
+    if (SecondsOfDay < 0)
+    {
+        SecondsOfDay += SECONDS_PER_DAY;
+        Days -= 1;
+    }
+
+    CivilFromDays(Days, &Result.Year, &Result.Month, &Result.Day);
+    Result.Hour = (int32_t)(SecondsOfDay / SECONDS_PER_HOUR);
+    Result.Minute = (int32_t)((SecondsOfDay % SECONDS_PER_HOUR) / SECONDS_PER_MINUTE);
+    Result.Second = (int32_t)(SecondsOfDay % SECONDS_PER_MINUTE);
+    Result.Millisecond = 0;
+
+    Weekday = ((Days % DAYS_PER_WEEK) + EPOCH_WEEKDAY) % DAYS_PER_WEEK;
+    if (Weekday < 0)
+    {
+        Weekday += DAYS_PER_WEEK;
+    }
+    Result.WeekDay = (DayOfWeek)Weekday;
+    Result.Kind = DateTimeKind_Utc;
+    return Result;
+}
+
+static Error LocalDateTimeFromEpoch(int64_t unixSeconds, DateTime* out)
+{
+    time_t Time = (time_t)unixSeconds;
+    struct tm BrokenTime;
+
+    if ((int64_t)Time != unixSeconds)
+    {
+        return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+            u8"Unix second is outside the range representable by the platform's time_t.");
+    }
+
+#if defined(__linux__)
+    if (localtime_r(&Time, &BrokenTime) == NULL)
+#elif defined(_WIN32)
+    if (localtime_s(&BrokenTime, &Time) != 0)
+#endif
+    {
+        return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+            u8"Unix second could not be converted to local time.");
+    }
+
+    out->Year = BrokenTime.tm_year + TM_YEAR_EPOCH;
+    out->Month = BrokenTime.tm_mon + 1;
+    out->Day = BrokenTime.tm_mday;
+    out->Hour = BrokenTime.tm_hour;
+    out->Minute = BrokenTime.tm_min;
+    out->Second = BrokenTime.tm_sec;
+    out->Millisecond = 0;
+    out->WeekDay = (DayOfWeek)BrokenTime.tm_wday;
+    out->Kind = DateTimeKind_Local;
+    return Error_CreateSuccess();
+}
+
+static Error EpochFromLocalDateTime(const DateTime* self, int64_t* out)
+{
+    struct tm BrokenTime;
+    time_t Result;
+
+    Memory_Zero(&BrokenTime, sizeof(BrokenTime));
+    BrokenTime.tm_year = self->Year - TM_YEAR_EPOCH;
+    BrokenTime.tm_mon = self->Month - 1;
+    BrokenTime.tm_mday = self->Day;
+    BrokenTime.tm_hour = self->Hour;
+    BrokenTime.tm_min = self->Minute;
+    BrokenTime.tm_sec = self->Second;
+    BrokenTime.tm_isdst = -1; // Let the library decide whether daylight saving is in effect.
+
+    Result = mktime(&BrokenTime);
+    if (Result == (time_t)-1)
+    {
+        return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+            u8"Local DateTime is outside the range representable as a Unix second.");
+    }
+
+    *out = (int64_t)Result;
+    return Error_CreateSuccess();
+}
+
+
 // Public functions.
 DateTime DateTime_Now(void)
 {
@@ -137,6 +261,43 @@ DateTime DateTime_Now(void)
 DateTime DateTime_UtcNow(void)
 {
     return GetCurrentTime(true);
+}
+
+Error DateTime_FromUnixSeconds(int64_t unixSeconds, DateTimeKind kind, DateTime* out)
+{
+    if (out == NULL)
+    {
+        return Error_Construct1(ErrorCode_IllegalArgument,
+            u8"DateTime_FromUnixSeconds requires a non-null output.");
+    }
+
+    if (kind == DateTimeKind_Utc)
+    {
+        *out = UtcDateTimeFromEpoch(unixSeconds);
+        return Error_CreateSuccess();
+    }
+
+    return LocalDateTimeFromEpoch(unixSeconds, out);
+}
+
+Error DateTime_ToUnixSeconds(const DateTime* self, int64_t* out)
+{
+    if ((self == NULL) || (out == NULL))
+    {
+        return Error_Construct1(ErrorCode_IllegalArgument,
+            u8"DateTime_ToUnixSeconds requires non-null arguments.");
+    }
+
+    if (self->Kind == DateTimeKind_Local)
+    {
+        return EpochFromLocalDateTime(self, out);
+    }
+
+    *out = (DaysFromCivil(self->Year, self->Month, self->Day) * SECONDS_PER_DAY)
+        + ((int64_t)self->Hour * SECONDS_PER_HOUR)
+        + ((int64_t)self->Minute * SECONDS_PER_MINUTE)
+        + (int64_t)self->Second;
+    return Error_CreateSuccess();
 }
 
 ComparisonResult DateTime_Compare(const DateTime* a, const DateTime* b)

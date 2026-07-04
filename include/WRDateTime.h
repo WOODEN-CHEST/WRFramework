@@ -107,6 +107,41 @@ DateTime DateTime_Now(void);
 DateTime DateTime_UtcNow(void);
 
 /**
+ * @brief Breaks a Unix epoch second down into a DateTime.
+ *
+ * @p unixSeconds is an absolute instant measured in whole seconds since the Unix epoch
+ * (1970-01-01T00:00:00 UTC), the same reference as the C library's time_t. The @p kind argument
+ * selects how that instant is rendered: DateTimeKind_Utc breaks it down in UTC, while
+ * DateTimeKind_Local (or DateTimeKind_Unspecified, treated as local) applies the host machine's
+ * time-zone and daylight-saving rules. The resulting DateTime's Kind is set to DateTimeKind_Utc for
+ * a UTC breakdown and DateTimeKind_Local otherwise. The Millisecond field is always 0 (epoch
+ * seconds carry no sub-second component).
+ * @param unixSeconds Whole seconds since the Unix epoch (may be negative for instants before it).
+ * @param kind Whether to render the instant in UTC or local time.
+ * @param out [out] Receives the broken-down DateTime. Must not be NULL.
+ * @returns ErrorCode_Success on success; ErrorCode_IllegalArgument if @p out is NULL;
+ *          ErrorCode_ArgumentOutOfRange if @p unixSeconds cannot be represented in the platform's
+ *          time_t (local breakdown only) or the local conversion failed.
+ */
+Error DateTime_FromUnixSeconds(int64_t unixSeconds, DateTimeKind kind, DateTime* out);
+
+/**
+ * @brief Converts a DateTime to a Unix epoch second.
+ *
+ * Produces the whole number of seconds between the Unix epoch (1970-01-01T00:00:00 UTC) and the
+ * instant described by @p self. The value's Kind determines interpretation: DateTimeKind_Local is
+ * read as a local time (applying the host time-zone and daylight-saving rules), while
+ * DateTimeKind_Utc and DateTimeKind_Unspecified are read as UTC. The Millisecond field is ignored
+ * (the result is truncated to whole seconds).
+ * @param self The value to convert. Must not be NULL.
+ * @param out [out] Receives the epoch second (may be negative). Must not be NULL.
+ * @returns ErrorCode_Success on success; ErrorCode_IllegalArgument if @p self or @p out is NULL;
+ *          ErrorCode_ArgumentOutOfRange if a local-time value is outside the range representable by
+ *          the platform's time_t / mktime.
+ */
+Error DateTime_ToUnixSeconds(const DateTime* self, int64_t* out);
+
+/**
  * @brief Compares two DateTime values chronologically.
  *
  * Compares the calendar fields in order (Year, then Month, Day, Hour, Minute, Second, Millisecond).
