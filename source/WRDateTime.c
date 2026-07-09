@@ -36,7 +36,7 @@
 
 
 // Static functions.
-static DateTime GetCurrentTime(bool isUtc)
+static DateTime GetCurrentDateTime(bool isUtc)
 {
     DateTime Result;
     Result.Kind = isUtc ? DateTimeKind_Utc : DateTimeKind_Local;
@@ -255,12 +255,12 @@ static Error EpochFromLocalDateTime(const DateTime* self, int64_t* out)
 // Public functions.
 DateTime DateTime_Now(void)
 {
-    return GetCurrentTime(false);
+    return GetCurrentDateTime(false);
 }
 
 DateTime DateTime_UtcNow(void)
 {
-    return GetCurrentTime(true);
+    return GetCurrentDateTime(true);
 }
 
 Error DateTime_FromUnixSeconds(int64_t unixSeconds, DateTimeKind kind, DateTime* out)
