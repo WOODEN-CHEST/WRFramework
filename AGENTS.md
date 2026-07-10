@@ -175,6 +175,11 @@ functionality is handled through a strict split between public headers and imple
 | Local variables (non-parameter) | PascalCase | `EntityCount`, `Temp` |
 | Function parameters | camelCase | `entityCount`, `self` |
 
+When naming booleans name them in a way that they can answer a question.
+For example, "isJumping", "hasJumped", "wasJumping", not "jumping."
+When creating booleans, IF POSSIBLE (depends on context, don't force if impossible), try to make the boolean answer an enabled state.
+For example, use "IsPixelationEnabled" instead of something like "IsPixelationDisabled" or "IsPixelationOmitted".
+
 **"Public" means accessible to modules outside the one that owns the struct.** Read-only members use the `_camelCase`
 prefix as a signal — C has no enforcement, so this is a convention the agent must respect and not bypass.
 
@@ -489,7 +494,7 @@ a macro will be fine.
 ---
 
 ## Comments
-- Do not add useless comments everywhere, only comment the super non-obvious, weird or hacky stuff, which should be rare.
+- Do not add useless comments everywhere.
 
 ---
 

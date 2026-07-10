@@ -33,14 +33,11 @@ uint64_t Stopwatch_GetTimestampNanoseconds(void)
     uint64_t WholeSeconds;
     uint64_t RemainderTicks;
 
-    // On Windows XP and later these never fail, matching this module's infallible contract.
     QueryPerformanceCounter(&Counter);
     QueryPerformanceFrequency(&Frequency);
     Ticks = (uint64_t)Counter.QuadPart;
     TicksPerSecond = (uint64_t)Frequency.QuadPart;
 
-    // Split into whole seconds plus a sub-second remainder before scaling to nanoseconds so that
-    // neither multiply can wrap uint64: a naive Ticks * 1e9 would overflow within seconds of boot.
     WholeSeconds = Ticks / TicksPerSecond;
     RemainderTicks = Ticks % TicksPerSecond;
     return (WholeSeconds * NANOSECONDS_PER_SECOND)
@@ -50,8 +47,6 @@ uint64_t Stopwatch_GetTimestampNanoseconds(void)
     struct timespec RawTime;
 
     clock_gettime(CLOCK_MONOTONIC, &RawTime);
-    // tv_sec/tv_nsec are already split into whole seconds and a sub-second remainder, so the same
-    // overflow-safe form falls out directly with no frequency conversion.
     return ((uint64_t)RawTime.tv_sec * NANOSECONDS_PER_SECOND) + (uint64_t)RawTime.tv_nsec;
 #endif
 }
@@ -65,7 +60,6 @@ Stopwatch Stopwatch_StartNew(void)
 
 uint64_t Stopwatch_ElapsedNanoseconds(const Stopwatch* self)
 {
-    // The clock is monotonic, so the current reading is never below the stored start.
     return Stopwatch_GetTimestampNanoseconds() - self->_startTimestamp;
 }
 
