@@ -28,6 +28,12 @@ typedef struct NativeDirectoryEnumeratorStruct
 
 // Fields.
 static const size_t FILE_SYSTEM_PLATFORM_TEMP_BUFFER_INITIAL_CAPACITY = 256;
+static const unsigned char* const WINDOWS_EXTENDED_LENGTH_PREFIX = u8"\\\\?\\";
+static const unsigned char* const WINDOWS_EXTENDED_LENGTH_UNC_PREFIX = u8"\\\\?\\UNC\\";
+static const unsigned char* const WINDOWS_UNC_PREFIX = u8"\\\\";
+// Windows paths are limited to 32,767 UTF-16 code units plus the null terminator.
+static const DWORD EXECUTABLE_PATH_WIDE_CAPACITY_MAX = 32768;
+static const DWORD EXECUTABLE_PATH_GROWTH_FACTOR = 2;
 
 
 // Static functions.
@@ -47,6 +53,35 @@ static bool IsDirectorySeparator(unsigned char character)
 {
     return (character == ENVIRONMENT_PATH_SEPARATOR_PRIMARY)
         || (character == ENVIRONMENT_PATH_SEPARATOR_SECONDARY);
+}
+
+static bool IsAsciiLetter(unsigned char character)
+{
+    return (((character >= u8'a') && (character <= u8'z'))
+        || ((character >= u8'A') && (character <= u8'Z')));
+}
+
+static unsigned char ToAsciiLower(unsigned char character)
+{
+    if ((character >= u8'A') && (character <= u8'Z'))
+    {
+        return (unsigned char)(character + (u8'a' - u8'A'));
+    }
+
+    return character;
+}
+
+static bool StartsWithAsciiIgnoreCase(const unsigned char* text, const unsigned char* prefix)
+{
+    for (size_t Index = 0; prefix[Index] != 0; Index++)
+    {
+        if (ToAsciiLower(text[Index]) != ToAsciiLower(prefix[Index]))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static bool FileSystemPlatformBufferAllocate(GenericBuffer* destination, size_t requestedCapacity)
@@ -300,6 +335,42 @@ static Error ConvertWideToUtf8(const wchar_t* text, unsigned char** outUtf8Text)
     }
 
     *outUtf8Text = Result;
+    return Error_CreateSuccess();
+}
+
+// GetModuleFileNameW keeps the extended-length prefix when the executable was started through such a
+// path, but WRPath rejects device paths. The drive and UNC forms are rewritten to their plain Win32
+// equivalents; any other device path is appended unchanged and left for path validation to reject.
+static Error AppendPathWithoutExtendedLengthPrefix(const unsigned char* path, GenericBuffer* outPath)
+{
+    const unsigned char* Remainder = path;
+    bool IsUncPath = false;
+
+    if (StartsWithAsciiIgnoreCase(path, WINDOWS_EXTENDED_LENGTH_UNC_PREFIX))
+    {
+        // "\\?\UNC\server\share\..." becomes "\\server\share\...".
+        Remainder = path + GetStringLength(WINDOWS_EXTENDED_LENGTH_UNC_PREFIX);
+        IsUncPath = true;
+    }
+    else if (StartsWithAsciiIgnoreCase(path, WINDOWS_EXTENDED_LENGTH_PREFIX))
+    {
+        // "\\?\X:\..." becomes "X:\...".
+        const unsigned char* DrivePath = path + GetStringLength(WINDOWS_EXTENDED_LENGTH_PREFIX);
+
+        if (IsAsciiLetter(DrivePath[0]) && (DrivePath[1] == u8':') && IsDirectorySeparator(DrivePath[2]))
+        {
+            Remainder = DrivePath;
+        }
+    }
+
+    if ((IsUncPath && !GenericBuffer_AppendString(outPath, WINDOWS_UNC_PREFIX))
+        || !GenericBuffer_AppendString(outPath, Remainder)
+        || !GenericBuffer_NullTerminate(outPath))
+    {
+        return Error_Construct1(ErrorCode_BufferTooSmall,
+            u8"Cannot store the executable path because the destination buffer cannot be grown.");
+    }
+
     return Error_CreateSuccess();
 }
 
@@ -689,6 +760,63 @@ Error FileSystemPlatform_MoveEntry(const unsigned char* oldPath, const unsigned 
     Memory_Free(WideOldPath);
     Memory_Free(WideNewPath);
     return Error_CreateSuccess();
+}
+
+Error FileSystemPlatform_GetExecutablePath(GenericBuffer* outPath)
+{
+    wchar_t* WidePath = NULL;
+    unsigned char* Utf8Path = NULL;
+    DWORD Capacity = MAX_PATH;
+    Error Result = Error_CreateSuccess();
+
+    if (outPath == NULL)
+    {
+        return CreateNullArgumentError(u8"outPath");
+    }
+
+    while (true)
+    {
+        DWORD Length = 0;
+
+        WidePath = Memory_Reallocate(WidePath, sizeof(*WidePath) * (size_t)Capacity);
+        Length = GetModuleFileNameW(NULL, WidePath, Capacity);
+        if (Length == 0)
+        {
+            DWORD NativeError = GetLastError();
+            Memory_Free(WidePath);
+            return Error_Construct3(ErrorCode_IO,
+                u8"Failed to get the executable path. Native error code %lu.",
+                (unsigned long)NativeError);
+        }
+        if (Length < Capacity)
+        {
+            break;
+        }
+
+        // A completely filled buffer means the path was truncated (ERROR_INSUFFICIENT_BUFFER, and
+        // possibly no null terminator), so retry with a larger one.
+        if (Capacity >= EXECUTABLE_PATH_WIDE_CAPACITY_MAX)
+        {
+            Memory_Free(WidePath);
+            return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+                u8"Cannot get the executable path because the required size exceeds the supported range.");
+        }
+
+        Capacity = (Capacity > (EXECUTABLE_PATH_WIDE_CAPACITY_MAX / EXECUTABLE_PATH_GROWTH_FACTOR))
+            ? EXECUTABLE_PATH_WIDE_CAPACITY_MAX
+            : (Capacity * EXECUTABLE_PATH_GROWTH_FACTOR);
+    }
+
+    Result = ConvertWideToUtf8(WidePath, &Utf8Path);
+    Memory_Free(WidePath);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = AppendPathWithoutExtendedLengthPrefix(Utf8Path, outPath);
+    Memory_Free(Utf8Path);
+    return Result;
 }
 
 #endif

@@ -1014,6 +1014,29 @@ Error FileSystem_CreateFile(const unsigned char* path)
     return FileStream_Deconstruct(&Stream);
 }
 
+Error FileSystem_GetExecutableDirectory(GenericBuffer* outPath)
+{
+    GenericBuffer ExecutablePathBuffer;
+    Error Result = ValidateByteBuffer(outPath, u8"outPath");
+
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    CreateGrowableByteBuffer(&ExecutablePathBuffer);
+    Result = FileSystemPlatform_GetExecutablePath(&ExecutablePathBuffer);
+    if (Result.Code != ErrorCode_Success)
+    {
+        Memory_Free(ExecutablePathBuffer._data);
+        return Result;
+    }
+
+    Result = Path_GetParentPath((const unsigned char*)ExecutablePathBuffer._data, outPath);
+    Memory_Free(ExecutablePathBuffer._data);
+    return Result;
+}
+
 void FileSystemEntryInfo_Deconstruct(FileSystemEntryInfo* self)
 {
     if (self == NULL)

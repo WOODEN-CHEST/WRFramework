@@ -26,6 +26,11 @@ typedef struct NativeDirectoryEnumeratorStruct
 
 // Fields.
 static const size_t FILE_SYSTEM_PLATFORM_TEMP_BUFFER_INITIAL_CAPACITY = 256;
+static const unsigned char* const EXECUTABLE_LINK_PATH = u8"/proc/self/exe";
+// The kernel reports at most PATH_MAX bytes for the link; this far larger cap only keeps the readlink
+// retry loop from growing without bound on a misbehaving platform.
+static const size_t EXECUTABLE_PATH_CAPACITY_MAX = 65536;
+static const size_t EXECUTABLE_PATH_GROWTH_FACTOR = 2;
 
 
 // Static functions.
@@ -456,6 +461,63 @@ Error FileSystemPlatform_MoveEntry(const unsigned char* oldPath, const unsigned 
     }
 
     return Error_CreateSuccess();
+}
+
+Error FileSystemPlatform_GetExecutablePath(GenericBuffer* outPath)
+{
+    size_t Capacity = FILE_SYSTEM_PLATFORM_TEMP_BUFFER_INITIAL_CAPACITY;
+
+    if (outPath == NULL)
+    {
+        return CreateNullArgumentError(u8"outPath");
+    }
+
+    while (true)
+    {
+        void* Tail = NULL;
+        ssize_t LinkLength = 0;
+
+        if (!GenericBuffer_GetWritableTail(outPath, Capacity, &Tail))
+        {
+            return Error_Construct3(ErrorCode_BufferTooSmall,
+                u8"Cannot read the executable path because the destination buffer cannot reserve %zu bytes.",
+                Capacity);
+        }
+
+        errno = 0;
+        LinkLength = readlink((const char*)EXECUTABLE_LINK_PATH, Tail, Capacity);
+        if (LinkLength < 0)
+        {
+            return Error_Construct3(ErrorCode_IO,
+                u8"Failed to read the executable path from \"%s\". Native error code %d.",
+                EXECUTABLE_LINK_PATH,
+                errno);
+        }
+        if ((size_t)LinkLength < Capacity)
+        {
+            if (!GenericBuffer_CommitCount(outPath, (size_t)LinkLength)
+                || !GenericBuffer_NullTerminate(outPath))
+            {
+                return Error_Construct3(ErrorCode_BufferTooSmall,
+                    u8"Cannot store the executable path because the destination buffer requires at least %zu bytes of capacity.",
+                    (size_t)LinkLength + 1);
+            }
+
+            return Error_CreateSuccess();
+        }
+
+        // readlink truncates silently and does not null-terminate, so a completely filled buffer may
+        // hold only part of the path: retry with a larger one.
+        if (Capacity >= EXECUTABLE_PATH_CAPACITY_MAX)
+        {
+            return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+                u8"Cannot read the executable path because the required size exceeds the supported range.");
+        }
+
+        Capacity = (Capacity > (EXECUTABLE_PATH_CAPACITY_MAX / EXECUTABLE_PATH_GROWTH_FACTOR))
+            ? EXECUTABLE_PATH_CAPACITY_MAX
+            : (Capacity * EXECUTABLE_PATH_GROWTH_FACTOR);
+    }
 }
 
 #endif

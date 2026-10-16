@@ -21,3 +21,7 @@ void FileSystemPlatform_CloseDirectory(void* handle);
 Error FileSystemPlatform_DeleteEntry(const unsigned char* path);
 
 Error FileSystemPlatform_MoveEntry(const unsigned char* oldPath, const unsigned char* newPath);
+
+// Appends the absolute path of the running executable, as reported by the OS (UTF-8, null-terminated),
+// to outPath, which must be an empty growable byte buffer.
+Error FileSystemPlatform_GetExecutablePath(GenericBuffer* outPath);
