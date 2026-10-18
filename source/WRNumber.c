@@ -110,6 +110,20 @@ static Error CreateDecimalBufferError(void)
         u8"Passed in generic buffer is too small to fit the number string.");
 }
 
+/* Writes a NUL just past the buffer's count without counting it, as every ToString function documents: the text then
+ * reads as a C string, and the next append continues it instead of landing behind the terminator. */
+static bool WriteTerminatorPastCount(GenericBuffer* buffer)
+{
+    void* Tail = NULL;
+    if (!GenericBuffer_GetWritableTail(buffer, 1U, &Tail))
+    {
+        return false;
+    }
+    unsigned char* Terminator = Tail;
+    *Terminator = 0U;
+    return true;
+}
+
 static unsigned char ToLowerAscii(unsigned char value)
 {
     if ((value >= u8'A') && (value <= u8'Z'))
@@ -380,7 +394,7 @@ static Error WriteIntegerCore(uint64_t magnitude, bool isNegative, int32_t base,
         return Result;
     }
 
-    if (!GenericBuffer_NullTerminate(buffer))
+    if (!WriteTerminatorPastCount(buffer))
     {
         return CreateDecimalBufferError();
     }
@@ -625,7 +639,7 @@ static Error AppendFormattedDouble(double value, bool isFloat, GenericBuffer* bu
     ReplaceDecimalSeparator(WriteStart, RequiredSize, options._separator);
     GenericBuffer_CommitCount(buffer, RequiredSize);
 
-    if (!GenericBuffer_NullTerminate(buffer))
+    if (!WriteTerminatorPastCount(buffer))
     {
         return CreateDecimalBufferError();
     }
@@ -643,7 +657,7 @@ static Error AppendDecimal(double value, bool isFloat, GenericBuffer* buffer, De
 
     if (Math_IsNaNDouble(value))
     {
-        if (!GenericBuffer_AppendString(buffer, STRING_NAN_NORMAL) || !GenericBuffer_NullTerminate(buffer))
+        if (!GenericBuffer_AppendString(buffer, STRING_NAN_NORMAL) || !WriteTerminatorPastCount(buffer))
         {
             return CreateDecimalBufferError();
         }
@@ -652,7 +666,7 @@ static Error AppendDecimal(double value, bool isFloat, GenericBuffer* buffer, De
 
     if (Math_IsInfinityPosDouble(value))
     {
-        if (!GenericBuffer_AppendString(buffer, STRING_POSITIVE_INFINITY) || !GenericBuffer_NullTerminate(buffer))
+        if (!GenericBuffer_AppendString(buffer, STRING_POSITIVE_INFINITY) || !WriteTerminatorPastCount(buffer))
         {
             return CreateDecimalBufferError();
         }
@@ -661,7 +675,7 @@ static Error AppendDecimal(double value, bool isFloat, GenericBuffer* buffer, De
 
     if (Math_IsInfinityNegDouble(value))
     {
-        if (!GenericBuffer_AppendString(buffer, STRING_NEGATIVE_INFINITY) || !GenericBuffer_NullTerminate(buffer))
+        if (!GenericBuffer_AppendString(buffer, STRING_NEGATIVE_INFINITY) || !WriteTerminatorPastCount(buffer))
         {
             return CreateDecimalBufferError();
         }

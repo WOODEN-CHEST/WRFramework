@@ -504,20 +504,15 @@ static Error InsertFormattedNumber(StringBuilder* self,
         return Result;
     }
 
+    // The number formatters append the text and leave their NUL past the count, the temp buffer's own convention, so
+    // the counted bytes are exactly the text to insert.
     Result = writeFunction(self->_activeTempBuffer, userData);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
     }
-    if ((self->_activeTempBuffer->_count == 0U)
-        || (self->_activeTempBuffer->_data[self->_activeTempBuffer->_count - 1U] != u8'\0'))
-    {
-        return CreateInvalidStateError();
-    }
 
-    GenericBuffer_SetCount(self->_activeTempBuffer, self->_activeTempBuffer->_count - 1U);
     Result = InsertBytesFromTempBuffer(self, index, operationName);
-    GenericBuffer_CommitCount(self->_activeTempBuffer, 1);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;

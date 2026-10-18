@@ -474,6 +474,11 @@ in usage converted to UTF-8.
 - **Document readers cap nesting depth.** `JSON_Deserialize` and `GHDF_Read` reject documents nested deeper than
   512 levels (`JSON_MAX_NESTING_DEPTH` / `GHDF_MAX_NESTING_DEPTH`; every object/array or compound/array is one
   level, root = 1) with `ErrorCode_InvalidJSON` / `ErrorCode_Deserialize`, so hostile input cannot overflow the stack.
+- **Number formatters leave their NUL past the count.** The integer `Number_*ToString` functions,
+  `Number_FloatToString` and `Number_DoubleToString` append the text and write a NUL just past the buffer's count
+  without counting it (the convention `StringBuilder`'s buffers use), so the result reads as a C string and the next
+  append continues it. (They used to count the NUL, so anything appended after a number landed behind it.)
+  `GenericBuffer_NullTerminate`, by contrast, appends a counted NUL.
 
 
 ---
