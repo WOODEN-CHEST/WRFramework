@@ -160,6 +160,8 @@ static Error GetOrCreateEntryPool(WRBufferPool* self, size_t elementSize, Object
     {
         return Result;
     }
+    // A missing entry is reported as an error with a message: release it before reusing Result.
+    Error_Deconstruct(&Result);
 
     Result = ConstructEntryPool(&NewPool);
     if (Result.Code != ErrorCode_Success)
@@ -375,6 +377,7 @@ Error BufferPool_Return(WRBufferPool* self, GenericBuffer* bufferToReturn)
     Result = GetEntryPool(self, bufferToReturn->_elementSize, &Pool);
     if (Result.Code == ErrorCode_InvalidOperation)
     {
+        Error_Deconstruct(&Result);
         return CreateForeignBufferError();
     }
     if (Result.Code != ErrorCode_Success)
@@ -385,6 +388,7 @@ Error BufferPool_Return(WRBufferPool* self, GenericBuffer* bufferToReturn)
     Result = ObjectPool_DisposeObject(Pool, bufferToReturn);
     if (Result.Code == ErrorCode_IllegalArgument)
     {
+        Error_Deconstruct(&Result);
         return CreateForeignBufferError();
     }
 

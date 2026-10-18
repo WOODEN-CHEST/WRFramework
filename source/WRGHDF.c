@@ -12,6 +12,7 @@
 #define GHDF_TYPE_ARRAY_BIT ((uint8_t)0x80U)
 #define GHDF_VERSION ((uint64_t)1U)
 #define GHDF_POOL_SECTION_CAPACITY ((size_t)16U)
+#define GHDF_ROOT_NESTING_DEPTH ((size_t)1U)
 
 
 // Types.
@@ -148,6 +149,13 @@ static Error CreateLengthRangeError(uint64_t length, const unsigned char* kindNa
         u8"GHDF %s length %" PRIu64 " exceeds the supported platform range.",
         kindName,
         length);
+}
+
+static Error CreateNestingDepthError(void)
+{
+    return Error_Construct3(ErrorCode_Deserialize,
+        u8"GHDF nesting depth exceeds GHDF_MAX_NESTING_DEPTH (%zu).",
+        GHDF_MAX_NESTING_DEPTH);
 }
 
 static Error CreateInvalidArrayValueError(void)
@@ -1622,11 +1630,17 @@ static Error GHDF_WriteArray(BinaryIOStream* stream, GHDFArray* array);
 
 static Error GHDF_WriteCompoundBody(BinaryIOStream* stream, const GHDFCompound* compound);
 
-static Error GHDF_ReadCompoundBody(BinaryIOStream* stream, GHDFObjectPool* objectPool, GHDFCompound* compound);
+// Container readers take the nesting depth of the compound/array they read (root compound = 1) and
+// reject it before reading any of its contents when it exceeds GHDF_MAX_NESTING_DEPTH.
+static Error GHDF_ReadCompoundBody(BinaryIOStream* stream,
+    GHDFObjectPool* objectPool,
+    GHDFCompound* compound,
+    size_t depth);
 
 static Error GHDF_ReadArray(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
     GHDFValueType elementType,
+    size_t depth,
     GHDFArray** outArray);
 
 static Error GHDF_ReadScalarValue(BinaryIOStream* stream,
@@ -1718,6 +1732,7 @@ static Error GHDF_WriteEntryValue(BinaryIOStream* stream,
 static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
     GHDFCompoundEntryType entryType,
+    size_t parentDepth,
     GHDFObjectValue* outValue)
 {
     Error Result = Error_CreateSuccess();
@@ -1731,7 +1746,7 @@ static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
     outValue->Type = entryType.ValueType;
     if (entryType.IsArray)
     {
-        return GHDF_ReadArray(stream, objectPool, entryType.ValueType, &outValue->Value.Array);
+        return GHDF_ReadArray(stream, objectPool, entryType.ValueType, parentDepth + 1U, &outValue->Value.Array);
     }
     if (entryType.ValueType == GHDFValueType_Compound)
     {
@@ -1743,7 +1758,7 @@ static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
             return Result;
         }
 
-        Result = GHDF_ReadCompoundBody(stream, objectPool, Compound);
+        Result = GHDF_ReadCompoundBody(stream, objectPool, Compound, parentDepth + 1U);
         if (Result.Code != ErrorCode_Success)
         {
             (void)GHDFObjectPool_ReturnCompound(objectPool, Compound, true);
@@ -1808,6 +1823,7 @@ static Error GHDF_WriteArray(BinaryIOStream* stream, GHDFArray* array)
 static Error GHDF_ReadArray(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
     GHDFValueType elementType,
+    size_t depth,
     GHDFArray** outArray)
 {
     uint64_t ElementCount64 = 0U;
@@ -1821,6 +1837,11 @@ static Error GHDF_ReadArray(BinaryIOStream* stream,
     }
 
     *outArray = NULL;
+    if (depth > GHDF_MAX_NESTING_DEPTH)
+    {
+        return CreateNestingDepthError();
+    }
+
     Result = BinaryIOStream_ReadEncodedUInt64(stream, &ElementCount64);
     if (Result.Code != ErrorCode_Success)
     {
@@ -1852,7 +1873,7 @@ static Error GHDF_ReadArray(BinaryIOStream* stream,
                 return Result;
             }
 
-            Result = GHDF_ReadCompoundBody(stream, objectPool, Value.Value.Compound);
+            Result = GHDF_ReadCompoundBody(stream, objectPool, Value.Value.Compound, depth + 1U);
         }
         else
         {
@@ -1958,7 +1979,10 @@ static Error GHDF_WriteCompoundBody(BinaryIOStream* stream, const GHDFCompound* 
     return Result;
 }
 
-static Error GHDF_ReadCompoundBody(BinaryIOStream* stream, GHDFObjectPool* objectPool, GHDFCompound* compound)
+static Error GHDF_ReadCompoundBody(BinaryIOStream* stream,
+    GHDFObjectPool* objectPool,
+    GHDFCompound* compound,
+    size_t depth)
 {
     uint64_t EntryCount64 = 0U;
     size_t EntryCount = 0U;
@@ -1967,6 +1991,10 @@ static Error GHDF_ReadCompoundBody(BinaryIOStream* stream, GHDFObjectPool* objec
     if (compound == NULL)
     {
         return CreateNullArgumentError(u8"compound");
+    }
+    if (depth > GHDF_MAX_NESTING_DEPTH)
+    {
+        return CreateNestingDepthError();
     }
 
     Result = BinaryIOStream_ReadEncodedUInt64(stream, &EntryCount64);
@@ -2009,7 +2037,7 @@ static Error GHDF_ReadCompoundBody(BinaryIOStream* stream, GHDFObjectPool* objec
             return Result;
         }
 
-        Result = GHDF_ReadEntryValue(stream, objectPool, EntryType, &Value);
+        Result = GHDF_ReadEntryValue(stream, objectPool, EntryType, depth, &Value);
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
@@ -2372,7 +2400,7 @@ Error GHDF_Read(IOStream* stream, GHDFObjectPool* objectPool, GHDFCompound** out
     }
     if (Result.Code == ErrorCode_Success)
     {
-        Result = GHDF_ReadCompoundBody(&BinaryStream, objectPool, Root);
+        Result = GHDF_ReadCompoundBody(&BinaryStream, objectPool, Root, GHDF_ROOT_NESTING_DEPTH);
     }
 
     Error CleanupResult = BinaryIOStream_Deconstruct(&BinaryStream);

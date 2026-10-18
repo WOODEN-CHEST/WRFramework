@@ -26,6 +26,7 @@ typedef struct JSONParserStruct
     const unsigned char* Data;
     size_t Length;
     size_t Index;
+    size_t Depth;   // Open objects/arrays, including the one being parsed (never above JSON_MAX_NESTING_DEPTH).
 } JSONParser;
 
 typedef struct JSONCompoundEntryEnumeratorStruct
@@ -164,6 +165,14 @@ static Error CreateInvalidJSONError(size_t index, const unsigned char* message)
         u8"Invalid JSON at byte index %zu: %s.",
         index,
         message);
+}
+
+static Error CreateNestingDepthError(size_t index)
+{
+    return Error_Construct3(ErrorCode_InvalidJSON,
+        u8"Invalid JSON at byte index %zu: nesting depth exceeds JSON_MAX_NESTING_DEPTH (%zu).",
+        index,
+        JSON_MAX_NESTING_DEPTH);
 }
 
 static Error CreateSerializeError(const unsigned char* message)
@@ -1569,6 +1578,32 @@ static Error JSONParser_ParseArray(JSONParser* self, JSONObjectValue* outValue)
     }
 }
 
+// Parses the object or array starting at the current byte, one nesting level below the current one.
+// The limit is checked before anything is borrowed, so a rejected container needs no cleanup here:
+// the enclosing containers release themselves through their existing error paths.
+static Error JSONParser_ParseContainer(JSONParser* self, unsigned char openingByte, JSONObjectValue* outValue)
+{
+    Error Result = Error_CreateSuccess();
+
+    if (self->Depth >= JSON_MAX_NESTING_DEPTH)
+    {
+        return CreateNestingDepthError(self->Index);
+    }
+
+    self->Depth++;
+    if (openingByte == JSON_BYTE_OPEN_BRACE)
+    {
+        Result = JSONParser_ParseObject(self, outValue);
+    }
+    else
+    {
+        Result = JSONParser_ParseArray(self, outValue);
+    }
+    self->Depth--;
+
+    return Result;
+}
+
 static Error JSONParser_ParseValue(JSONParser* self, JSONObjectValue* outValue)
 {
     unsigned char Byte = 0;
@@ -1593,9 +1628,8 @@ static Error JSONParser_ParseValue(JSONParser* self, JSONObjectValue* outValue)
     switch (Byte)
     {
         case u8'{':
-            return JSONParser_ParseObject(self, outValue);
         case u8'[':
-            return JSONParser_ParseArray(self, outValue);
+            return JSONParser_ParseContainer(self, Byte, outValue);
         case u8'"':
         {
             GenericBuffer* StringBuffer = NULL;
@@ -2101,6 +2135,7 @@ Error JSON_Deserialize(JSONObjectPool* pool, GenericBuffer* source, JSONObjectVa
     Parser.Data = source->_data;
     Parser.Length = source->_count;
     Parser.Index = 0;
+    Parser.Depth = 0;
     *outValue = (JSONObjectValue){ .Type = JSONValueType_None };
 
     Result = JSONParser_ParseValue(&Parser, outValue);

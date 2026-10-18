@@ -10,6 +10,9 @@
 // Macros.
 #define INTEGER_TO_STRING_BUFFER_SIZE 66
 #define DECIMAL_FORMAT_BUFFER_SIZE 32
+/* printf's default %g precision, where the shortest form's search starts: values it already reads back exactly keep
+ * their usual form ("100", not "1e+02"). */
+#define SHORTEST_PRECISION_START 6
 
 
 // Types.
@@ -525,7 +528,33 @@ static void ReplaceDecimalSeparator(unsigned char* str, size_t count, DecimalSep
     }
 }
 
-static void CreateDecimalPrintfFormat(DecimalFormatOptions options, char* format, size_t formatSize)
+// The smallest %g precision from SHORTEST_PRECISION_START whose text reads back as the same value: up to
+// DBL_DECIMAL_DIG (17) digits for a double, up to FLT_DECIMAL_DIG (9) for a float (whose text must read back as the
+// same float).
+static int FindShortestPrecision(double value, bool isFloat)
+{
+    int MaxPrecision = isFloat ? FLT_DECIMAL_DIG : DBL_DECIMAL_DIG;
+    char Text[DECIMAL_FORMAT_BUFFER_SIZE];
+    for (int Precision = SHORTEST_PRECISION_START; Precision < MaxPrecision; Precision++)
+    {
+        int Count = snprintf(Text, sizeof(Text), "%.*g", Precision, value);
+        if ((Count < 0) || ((size_t)Count >= sizeof(Text)))
+        {
+            continue;
+        }
+        double ReadBack = strtod(Text, NULL);
+        // A float compare only converts text that is within the float range (converting beyond it is undefined).
+        bool IsInFloatRange = (ReadBack <= (double)FLT_MAX) && (ReadBack >= -(double)FLT_MAX);
+        if (isFloat ? (IsInFloatRange && ((float)ReadBack == (float)value)) : (ReadBack == value))
+        {
+            return Precision;
+        }
+    }
+    return MaxPrecision;
+}
+
+static void CreateDecimalPrintfFormat(DecimalFormatOptions options, int shortestPrecision, char* format,
+    size_t formatSize)
 {
     char Conversion = 'f';
 
@@ -546,7 +575,7 @@ static void CreateDecimalPrintfFormat(DecimalFormatOptions options, char* format
     if (options._digitCountAfterSeparator == DIGIT_COUNT_AFTER_SEPARATOR_SHORTEST)
     {
         Conversion = options._isUpperCase ? 'G' : 'g';
-        snprintf(format, formatSize, "%%%c", Conversion);
+        snprintf(format, formatSize, "%%.%d%c", shortestPrecision, Conversion);
         return;
     }
 
@@ -559,7 +588,7 @@ static void CreateDecimalPrintfFormat(DecimalFormatOptions options, char* format
     snprintf(format, formatSize, "%%.%df", options._digitCountAfterSeparator);
 }
 
-static Error AppendFormattedDouble(double value, GenericBuffer* buffer, DecimalFormatOptions options)
+static Error AppendFormattedDouble(double value, bool isFloat, GenericBuffer* buffer, DecimalFormatOptions options)
 {
     char Format[DECIMAL_FORMAT_BUFFER_SIZE];
     int RequiredCharacterCount = 0;
@@ -571,7 +600,12 @@ static Error AppendFormattedDouble(double value, GenericBuffer* buffer, DecimalF
         return CreateNullArgumentError(u8"buffer");
     }
 
-    CreateDecimalPrintfFormat(options, Format, sizeof(Format));
+    int ShortestPrecision = 0;
+    if (options._digitCountAfterSeparator == DIGIT_COUNT_AFTER_SEPARATOR_SHORTEST)
+    {
+        ShortestPrecision = FindShortestPrecision(value, isFloat);
+    }
+    CreateDecimalPrintfFormat(options, ShortestPrecision, Format, sizeof(Format));
     RequiredCharacterCount = snprintf(NULL, 0, Format, value);
     if (RequiredCharacterCount < 0)
     {
@@ -597,6 +631,44 @@ static Error AppendFormattedDouble(double value, GenericBuffer* buffer, DecimalF
     }
 
     return Error_CreateSuccess();
+}
+
+// NaN and the infinities as their names, finite values per the options; isFloat when the value is a widened float.
+static Error AppendDecimal(double value, bool isFloat, GenericBuffer* buffer, DecimalFormatOptions options)
+{
+    if (buffer == NULL)
+    {
+        return CreateNullArgumentError(u8"buffer");
+    }
+
+    if (Math_IsNaNDouble(value))
+    {
+        if (!GenericBuffer_AppendString(buffer, STRING_NAN_NORMAL) || !GenericBuffer_NullTerminate(buffer))
+        {
+            return CreateDecimalBufferError();
+        }
+        return Error_CreateSuccess();
+    }
+
+    if (Math_IsInfinityPosDouble(value))
+    {
+        if (!GenericBuffer_AppendString(buffer, STRING_POSITIVE_INFINITY) || !GenericBuffer_NullTerminate(buffer))
+        {
+            return CreateDecimalBufferError();
+        }
+        return Error_CreateSuccess();
+    }
+
+    if (Math_IsInfinityNegDouble(value))
+    {
+        if (!GenericBuffer_AppendString(buffer, STRING_NEGATIVE_INFINITY) || !GenericBuffer_NullTerminate(buffer))
+        {
+            return CreateDecimalBufferError();
+        }
+        return Error_CreateSuccess();
+    }
+
+    return AppendFormattedDouble(value, isFloat, buffer, options);
 }
 
 static Error ParseDoubleCore(const unsigned char* str, DecimalSeparator separator, double* value)
@@ -793,7 +865,7 @@ Error Number_FloatFromString(const unsigned char* str, float* value, DecimalSepa
 
 Error Number_FloatToString(float value, GenericBuffer* buffer, DecimalFormatOptions options)
 {
-    return AppendFormattedDouble((double)value, buffer, options);
+    return AppendDecimal((double)value, true, buffer, options);
 }
 
 Error Number_DoubleFromString(const unsigned char* str, double* value, DecimalSeparator separator)
@@ -803,39 +875,7 @@ Error Number_DoubleFromString(const unsigned char* str, double* value, DecimalSe
 
 Error Number_DoubleToString(double value, GenericBuffer* buffer, DecimalFormatOptions options)
 {
-    if (buffer == NULL)
-    {
-        return CreateNullArgumentError(u8"buffer");
-    }
-
-    if (Math_IsNaNDouble(value))
-    {
-        if (!GenericBuffer_AppendString(buffer, STRING_NAN_NORMAL) || !GenericBuffer_NullTerminate(buffer))
-        {
-            return CreateDecimalBufferError();
-        }
-        return Error_CreateSuccess();
-    }
-
-    if (Math_IsInfinityPosDouble(value))
-    {
-        if (!GenericBuffer_AppendString(buffer, STRING_POSITIVE_INFINITY) || !GenericBuffer_NullTerminate(buffer))
-        {
-            return CreateDecimalBufferError();
-        }
-        return Error_CreateSuccess();
-    }
-
-    if (Math_IsInfinityNegDouble(value))
-    {
-        if (!GenericBuffer_AppendString(buffer, STRING_NEGATIVE_INFINITY) || !GenericBuffer_NullTerminate(buffer))
-        {
-            return CreateDecimalBufferError();
-        }
-        return Error_CreateSuccess();
-    }
-
-    return AppendFormattedDouble(value, buffer, options);
+    return AppendDecimal(value, false, buffer, options);
 }
 
 DecimalFormatOptions DecimalFormatOptions_CreateScientific(DecimalSeparator separator, bool isUpperCase)
