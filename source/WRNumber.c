@@ -90,6 +90,14 @@ static Error CreateNumberOverflowError(const unsigned char* str, size_t targetBy
         targetByteSize);
 }
 
+static Error CreateNumberOverflowErrorFloat(const unsigned char* str, size_t targetByteSize)
+{
+    return Error_Construct3(ErrorCode_ArgumentOutOfRange,
+        u8"Number \"%s\" is out of range for a %zu-byte floating point number.",
+        str,
+        targetByteSize);
+}
+
 static Error CreateInvalidDecimalSeparatorError(unsigned char separator)
 {
     return Error_Construct3(ErrorCode_IllegalArgument,
@@ -710,7 +718,11 @@ static Error ParseDoubleCore(const unsigned char* str, DecimalSeparator separato
 
     errno = 0;
     ParsedValue = strtod(Normalized, &ParseEnd);
-    if ((ParseEnd == Normalized) || (*ParseEnd != '\0') || (errno == ERANGE))
+    // A range error is refused only for overflow, where strtod returns infinity. The C library may report underflow as
+    // a range error too (glibc does), but then strtod returns the nearest double: a subnormal value, or zero.
+    if ((ParseEnd == Normalized)
+        || (*ParseEnd != '\0')
+        || ((errno == ERANGE) && Math_IsInfinityDouble(ParsedValue)))
     {
         Memory_Free(Normalized);
         return CreateInvalidDecimalStringError(str);
@@ -735,7 +747,8 @@ static Error ParseDoubleCore(const unsigned char* str, DecimalSeparator separato
             return CreateNullArgumentError(u8"value"); \
         } \
         \
-        Result = ParseIntegerCore(str, base, (uint64_t)(maxValue), &Parsed); \
+        /* The digits are read without their sign: allow up to the most negative value's magnitude (max + 1). */ \
+        Result = ParseIntegerCore(str, base, (uint64_t)(maxValue) + 1U, &Parsed); \
         if (Result.Code != ErrorCode_Success) \
         { \
             if ((Result.Code == ErrorCode_ArgumentOutOfRange) || (Result.Code == ErrorCode_BufferTooSmall)) \
@@ -746,6 +759,7 @@ static Error ParseDoubleCore(const unsigned char* str, DecimalSeparator separato
             return Result; \
         } \
         \
+        /* max + 1 is only allowed for a negative number. */ \
         MaxMagnitude = Parsed.IsNegative ? ((uint64_t)(maxValue) + 1U) : (uint64_t)(maxValue); \
         if (Parsed.Magnitude > MaxMagnitude) \
         { \
@@ -869,7 +883,7 @@ Error Number_FloatFromString(const unsigned char* str, float* value, DecimalSepa
     {
         if ((ParsedValue > FLT_MAX) || (ParsedValue < -FLT_MAX))
         {
-            return CreateNumberOverflowError(str, sizeof(float));
+            return CreateNumberOverflowErrorFloat(str, sizeof(float));
         }
     }
 

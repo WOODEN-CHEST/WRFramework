@@ -106,6 +106,7 @@ static const unsigned char* const JSON_LITERAL_ESCAPE_NEWLINE = u8"\\n";
 static const unsigned char* const JSON_LITERAL_ESCAPE_CARRIAGE_RETURN = u8"\\r";
 static const unsigned char* const JSON_LITERAL_ESCAPE_TAB = u8"\\t";
 static const unsigned char* const JSON_LITERAL_ESCAPE_UNICODE_PREFIX = u8"\\u";
+static const unsigned char* const JSON_LITERAL_ZERO_FRACTION = u8".0";
 
 
 // Static functions.
@@ -353,6 +354,23 @@ static bool IsWhitespaceByte(unsigned char byte)
 static bool IsDigitByte(unsigned char byte)
 {
     return (byte >= JSON_BYTE_ZERO) && (byte <= JSON_BYTE_NINE);
+}
+
+// Whether a formatted real number has neither a fraction nor an exponent ("2", "-0"), so it would read back as an
+// integer.
+static bool IsWholeNumberText(const unsigned char* text, size_t byteCount)
+{
+    for (size_t Index = 0; Index < byteCount; Index++)
+    {
+        if ((text[Index] == JSON_BYTE_PERIOD)
+            || (text[Index] == JSON_BYTE_LOWER_E)
+            || (text[Index] == JSON_BYTE_UPPER_E))
+        {
+            return false;
+        }
+    }
+
+    return true;
 }
 
 static bool IsHexDigitByte(unsigned char byte)
@@ -2059,6 +2077,11 @@ static Error SerializeValue(JSONObjectValue* value,
             {
                 // The count covers the digits only; the formatter's NUL lies past it.
                 Result = AppendBytes(destination, NumberBuffer._data, NumberBuffer._count, u8"write real number");
+            }
+            if ((Result.Code == ErrorCode_Success) && IsWholeNumberText(NumberBuffer._data, NumberBuffer._count))
+            {
+                // A whole value keeps a fraction ("2.0", not "2"), so it reads back as a real number, not an integer.
+                Result = AppendCString(destination, JSON_LITERAL_ZERO_FRACTION, u8"write real number fraction");
             }
             Memory_Free(NumberBuffer._data);
             return Result;
