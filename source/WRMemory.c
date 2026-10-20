@@ -7,6 +7,8 @@
 // Macros.
 #define GENERIC_BUFFER_SORT_ASCENDING (1)
 #define GENERIC_BUFFER_SORT_DESCENDING (-1)
+// Ranges up to this many elements are insertion sorted (fewer comparisons than partitioning them).
+#define GENERIC_BUFFER_SORT_INSERTION_LIMIT ((size_t)16)
 #define DEFAULT_GROWABLE_BUFFER_CAPACITY_MULTIPLIER 2
 
 
@@ -209,29 +211,167 @@ static size_t GenericBuffer_Partition(GenericBufferSortContext* context,
     return PartitionIndex;
 }
 
-static void GenericBuffer_QuickSort(GenericBufferSortContext* context,
+// Whether the element at indexA belongs after the one at indexB in the sort's order.
+static inline bool GenericBuffer_IsAfter(GenericBufferSortContext* context, size_t indexA, size_t indexB)
+{
+    ComparisonResult Result = context->Comparator(context->Buffer,
+        CreateGenericBufferElementData(context->Buffer, indexA),
+        CreateGenericBufferElementData(context->Buffer, indexB),
+        context->UserData);
+
+    return GenericBuffer_ShouldSwapForSort(Result, context->Direction);
+}
+
+static void GenericBuffer_InsertionSort(GenericBufferSortContext* context,
     size_t lowIndex,
     size_t highIndex,
+    unsigned char* swapBuffer)
+{
+    for (size_t Index = lowIndex + 1; Index <= highIndex; Index++)
+    {
+        for (size_t Position = Index; (Position > lowIndex) && GenericBuffer_IsAfter(context, Position - 1, Position);
+            Position--)
+        {
+            GenericBuffer_SwapElements(context->Buffer, Position - 1, Position, swapBuffer);
+        }
+    }
+}
+
+// Restores the heap order below the node at @p rootOffset of the heap stored in [lowIndex, lowIndex + count): every
+// parent at or after both of its children in the sort's order.
+static void GenericBuffer_SiftDown(GenericBufferSortContext* context,
+    size_t lowIndex,
+    size_t rootOffset,
+    size_t count,
+    unsigned char* swapBuffer)
+{
+    size_t Root = rootOffset;
+
+    while (Root < (count / 2))
+    {
+        size_t Child = (2 * Root) + 1;
+
+        if (((Child + 1) < count) && GenericBuffer_IsAfter(context, lowIndex + Child + 1, lowIndex + Child))
+        {
+            Child++;
+        }
+        if (!GenericBuffer_IsAfter(context, lowIndex + Child, lowIndex + Root))
+        {
+            return;
+        }
+
+        GenericBuffer_SwapElements(context->Buffer, lowIndex + Root, lowIndex + Child, swapBuffer);
+        Root = Child;
+    }
+}
+
+// The introsort's fallback: O(n log n) for any input, in place, with no recursion.
+static void GenericBuffer_HeapSort(GenericBufferSortContext* context,
+    size_t lowIndex,
+    size_t highIndex,
+    unsigned char* swapBuffer)
+{
+    size_t Count = (highIndex - lowIndex) + 1;
+
+    for (size_t Root = Count / 2; Root > 0; Root--)
+    {
+        GenericBuffer_SiftDown(context, lowIndex, Root - 1, Count, swapBuffer);
+    }
+    for (size_t End = Count - 1; End > 0; End--)
+    {
+        GenericBuffer_SwapElements(context->Buffer, lowIndex, lowIndex + End, swapBuffer);
+        GenericBuffer_SiftDown(context, lowIndex, 0, End, swapBuffer);
+    }
+}
+
+// Orders the first, middle and last elements of the range and moves the median of the three to the end, where the
+// partition takes its pivot: already sorted and reversed input then split in the middle instead of at an end.
+static void GenericBuffer_MoveMedianToEnd(GenericBufferSortContext* context,
+    size_t lowIndex,
+    size_t highIndex,
+    unsigned char* swapBuffer)
+{
+    size_t MiddleIndex = lowIndex + ((highIndex - lowIndex) / 2);
+
+    if (GenericBuffer_IsAfter(context, lowIndex, MiddleIndex))
+    {
+        GenericBuffer_SwapElements(context->Buffer, lowIndex, MiddleIndex, swapBuffer);
+    }
+    if (GenericBuffer_IsAfter(context, MiddleIndex, highIndex))
+    {
+        GenericBuffer_SwapElements(context->Buffer, MiddleIndex, highIndex, swapBuffer);
+    }
+    if (GenericBuffer_IsAfter(context, lowIndex, MiddleIndex))
+    {
+        GenericBuffer_SwapElements(context->Buffer, lowIndex, MiddleIndex, swapBuffer);
+    }
+
+    GenericBuffer_SwapElements(context->Buffer, MiddleIndex, highIndex, swapBuffer);
+}
+
+// Introsort: quicksort on a median-of-three pivot that recurses only into the smaller part (so the stack holds at most
+// log2 n frames) and loops on the larger one, heapsort once the depth limit is spent (so no input takes more than
+// O(n log n)), and insertion sort for small ranges.
+static void GenericBuffer_IntroSort(GenericBufferSortContext* context,
+    size_t lowIndex,
+    size_t highIndex,
+    size_t depthLimit,
     unsigned char* pivotBuffer,
     unsigned char* swapBuffer)
 {
     size_t PivotIndex = 0;
 
-    if (lowIndex >= highIndex)
+    while ((highIndex > lowIndex) && ((highIndex - lowIndex) >= GENERIC_BUFFER_SORT_INSERTION_LIMIT))
     {
-        return;
+        if (depthLimit == 0)
+        {
+            GenericBuffer_HeapSort(context, lowIndex, highIndex, swapBuffer);
+            return;
+        }
+
+        depthLimit--;
+        GenericBuffer_MoveMedianToEnd(context, lowIndex, highIndex, swapBuffer);
+        PivotIndex = GenericBuffer_Partition(context, lowIndex, highIndex, pivotBuffer, swapBuffer);
+        if ((PivotIndex - lowIndex) < (highIndex - PivotIndex))
+        {
+            if (PivotIndex > lowIndex)
+            {
+                GenericBuffer_IntroSort(context, lowIndex, PivotIndex - 1, depthLimit, pivotBuffer, swapBuffer);
+            }
+            lowIndex = PivotIndex + 1;
+        }
+        else
+        {
+            if (PivotIndex < highIndex)
+            {
+                GenericBuffer_IntroSort(context, PivotIndex + 1, highIndex, depthLimit, pivotBuffer, swapBuffer);
+            }
+            if (PivotIndex == lowIndex)
+            {
+                return;
+            }
+            highIndex = PivotIndex - 1;
+        }
     }
 
-    PivotIndex = GenericBuffer_Partition(context, lowIndex, highIndex, pivotBuffer, swapBuffer);
+    if (highIndex > lowIndex)
+    {
+        GenericBuffer_InsertionSort(context, lowIndex, highIndex, swapBuffer);
+    }
+}
 
-    if (PivotIndex > lowIndex)
+// How deep the introsort partitions before it falls back to heapsort: twice the base-2 logarithm of the count.
+static size_t GetSortDepthLimit(size_t count)
+{
+    size_t Limit = 0;
+
+    while (count > 1)
     {
-        GenericBuffer_QuickSort(context, lowIndex, PivotIndex - 1, pivotBuffer, swapBuffer);
+        count /= 2;
+        Limit += 2;
     }
-    if (PivotIndex < highIndex)
-    {
-        GenericBuffer_QuickSort(context, PivotIndex + 1, highIndex, pivotBuffer, swapBuffer);
-    }
+
+    return Limit;
 }
 
 static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferComparator comparator, const UserData* userData, int direction, void* scratch)
@@ -273,7 +413,8 @@ static bool GenericBuffer_SortInternal(GenericBuffer* buffer, GenericBufferCompa
         .Direction = direction,
     };
 
-    GenericBuffer_QuickSort(&Context, 0, buffer->_count - 1, PivotBuffer, SwapBuffer);
+    GenericBuffer_IntroSort(&Context, 0, buffer->_count - 1, GetSortDepthLimit(buffer->_count), PivotBuffer,
+        SwapBuffer);
 
     Memory_Free(OwnedScratch);
     return true;

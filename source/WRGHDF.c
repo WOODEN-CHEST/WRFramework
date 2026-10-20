@@ -13,6 +13,8 @@
 #define GHDF_VERSION ((uint64_t)1U)
 #define GHDF_POOL_SECTION_CAPACITY ((size_t)16U)
 #define GHDF_ROOT_NESTING_DEPTH ((size_t)1U)
+// How many bytes of a string GHDF_Read reserves and reads at a time when the stream cannot tell how much it has left.
+#define GHDF_STRING_READ_CHUNK_SIZE ((size_t)65536U)
 
 
 // Types.
@@ -77,6 +79,14 @@ struct GHDFObjectPoolStruct
     ObjectPool _arrayPool;
     ObjectPool _stringPool;
 };
+
+// What a read may still build (GHDF_ReadWithLimits); GHDF_Read reads without a limit.
+typedef struct GHDFReadBudgetStruct
+{
+    bool HasTreeByteLimit;
+    size_t TreeByteLimit;
+    size_t TreeBytesRemaining;
+} GHDFReadBudget;
 
 
 // Fields.
@@ -156,6 +166,24 @@ static Error CreateNestingDepthError(void)
     return Error_Construct3(ErrorCode_Deserialize,
         u8"GHDF nesting depth exceeds GHDF_MAX_NESTING_DEPTH (%zu).",
         GHDF_MAX_NESTING_DEPTH);
+}
+
+// Charges the estimated bytes of a value about to be built (byteCount plus extraByteCount) against the read limits.
+static Error GHDFReadBudget_Charge(GHDFReadBudget* self, size_t byteCount, size_t extraByteCount)
+{
+    if (!self->HasTreeByteLimit)
+    {
+        return Error_CreateSuccess();
+    }
+    if ((byteCount > self->TreeBytesRemaining) || (extraByteCount > (self->TreeBytesRemaining - byteCount)))
+    {
+        return Error_Construct3(ErrorCode_Deserialize,
+            u8"The GHDF document would take more than %zu bytes once read (GHDFReadLimits).",
+            self->TreeByteLimit);
+    }
+
+    self->TreeBytesRemaining -= byteCount + extraByteCount;
+    return Error_CreateSuccess();
 }
 
 static Error CreateInvalidArrayValueError(void)
@@ -1130,6 +1158,10 @@ static Error GHDFCompoundPool_ResetObject(void* object, const UserData* userData
     return Error_CreateSuccess();
 }
 
+// The pool's deconstruct hooks run only when the whole GHDFObjectPool is torn down, which frees every compound, array
+// and string borrowed from it. So a container frees its own storage only and never releases what it holds: a value
+// from this pool is freed with its own slot (releasing it here would hand it back to a sub-pool that may already be
+// gone, a use-after-free), and a value borrowed from another pool stays with that pool until it is deconstructed.
 static Error GHDFCompoundPool_DeconstructObject(void* object, const UserData* userData)
 {
     GHDFCompound* Compound = object;
@@ -1141,12 +1173,7 @@ static Error GHDFCompoundPool_DeconstructObject(void* object, const UserData* us
         return CreateNullArgumentError(u8"object");
     }
 
-    Result = GHDFCompound_ClearInternal(Compound);
-    if (Result.Code == ErrorCode_Success)
-    {
-        Result = HashMap_Deconstruct(&Compound->_entries);
-    }
-
+    Result = HashMap_Deconstruct(&Compound->_entries);
     Memory_Zero(Compound, sizeof(*Compound));
     return Result;
 }
@@ -1199,21 +1226,20 @@ static Error GHDFArrayPool_ResetObject(void* object, const UserData* userData)
     return Error_CreateSuccess();
 }
 
+// Frees the array's own storage only; see GHDFCompoundPool_DeconstructObject.
 static Error GHDFArrayPool_DeconstructObject(void* object, const UserData* userData)
 {
     GHDFArray* Array = object;
     (void)userData;
-    Error Result = Error_CreateSuccess();
 
     if (Array == NULL)
     {
         return CreateNullArgumentError(u8"object");
     }
 
-    Result = GHDFArray_ClearInternal(Array);
     ArrayList_Deconstruct(&Array->_values);
     Memory_Zero(Array, sizeof(*Array));
-    return Result;
+    return Error_CreateSuccess();
 }
 
 static Error GHDFObjectValue_Release(GHDFCompoundEntryType entryType, const GHDFObjectValue* value)
@@ -1514,12 +1540,52 @@ static Error GHDF_WriteStringValue(BinaryIOStream* stream, GenericBuffer* string
     return GHDFWriteExactBytes(stream, stringBuffer->_data, ByteCount);
 }
 
+// The declared length of a string comes from the data, so it is checked before anything is reserved for it: at most
+// GHDF_MAX_STRING_LENGTH, and no more than a seekable stream has left. A stream that cannot tell its size is still
+// read in chunks (GHDF_ReadOwnedStringValue), so memory only grows with the bytes that actually arrive.
+static Error GHDFCheckDeclaredStringLength(BinaryIOStream* stream, uint64_t declaredLength)
+{
+    size_t Remaining = 0U;
+    Error Result = Error_CreateSuccess();
+
+    if (declaredLength > GHDF_MAX_STRING_LENGTH)
+    {
+        return Error_Construct3(ErrorCode_Deserialize,
+            u8"A GHDF string declares %" PRIu64 " bytes; at most %" PRIu64 " are allowed.",
+            declaredLength,
+            GHDF_MAX_STRING_LENGTH);
+    }
+    if (!IOStream_IsSeekable(&stream->Base))
+    {
+        return Error_CreateSuccess();
+    }
+
+    Result = IOStream_GetStreamSizeRemaining(&stream->Base, &Remaining);
+    if (Result.Code != ErrorCode_Success)
+    {
+        // The stream could not tell; the chunked read still bounds what is reserved.
+        Error_Deconstruct(&Result);
+        return Error_CreateSuccess();
+    }
+    if (declaredLength > (uint64_t)Remaining)
+    {
+        return Error_Construct3(ErrorCode_Deserialize,
+            u8"A GHDF string declares %" PRIu64 " bytes, but only %zu remain in the data.",
+            declaredLength,
+            Remaining);
+    }
+
+    return Error_CreateSuccess();
+}
+
 static Error GHDF_ReadOwnedStringValue(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GenericBuffer** outString)
 {
     uint64_t Length64 = 0U;
     size_t Length = 0U;
+    size_t ReadCount = 0U;
     GenericBuffer* StringBuffer = NULL;
     Error Result = Error_CreateSuccess();
 
@@ -1535,7 +1601,20 @@ static Error GHDF_ReadOwnedStringValue(BinaryIOStream* stream,
         return Result;
     }
 
+    Result = GHDFCheckDeclaredStringLength(stream, Length64);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
     Result = ConvertUInt64ToSize(Length64, u8"string", &Length);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    // The buffer grows in powers of two while the string is read, so it holds up to twice its length.
+    Result = GHDFReadBudget_Charge(budget, GHDF_READ_STRING_BYTES, (Length > (SIZE_MAX / 2U)) ? SIZE_MAX : (Length * 2U));
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -1546,19 +1625,32 @@ static Error GHDF_ReadOwnedStringValue(BinaryIOStream* stream,
     {
         return Result;
     }
-    if (!GenericBuffer_TryPrepareForManualMutation(StringBuffer, Length + 1U))
-    {
-        (void)GHDFObjectPool_ReturnString(objectPool, StringBuffer);
-        return Error_Construct3(ErrorCode_BufferTooSmall,
-            u8"Could not allocate %zu bytes for a GHDF string.",
-            Length + 1U);
-    }
 
-    Result = GHDFReadExactBytes(stream, StringBuffer, Length);
-    if (Result.Code != ErrorCode_Success)
+    // Read in chunks, reserving each one only when it is read, so a short document declaring a long string fails
+    // with "unexpected end" after reading what it has instead of reserving the declared length first.
+    while (ReadCount < Length)
     {
-        (void)GHDFObjectPool_ReturnString(objectPool, StringBuffer);
-        return Result;
+        size_t ChunkSize = Length - ReadCount;
+
+        if (ChunkSize > GHDF_STRING_READ_CHUNK_SIZE)
+        {
+            ChunkSize = GHDF_STRING_READ_CHUNK_SIZE;
+        }
+        if (!GenericBuffer_TryPrepareForManualMutation(StringBuffer, ChunkSize))
+        {
+            (void)GHDFObjectPool_ReturnString(objectPool, StringBuffer);
+            return Error_Construct3(ErrorCode_BufferTooSmall,
+                u8"Could not allocate %zu bytes for a GHDF string.",
+                ReadCount + ChunkSize);
+        }
+
+        Result = GHDFReadExactBytes(stream, StringBuffer, ChunkSize);
+        if (Result.Code != ErrorCode_Success)
+        {
+            (void)GHDFObjectPool_ReturnString(objectPool, StringBuffer);
+            return Result;
+        }
+        ReadCount += ChunkSize;
     }
     if (!GenericBuffer_NullTerminate(StringBuffer))
     {
@@ -1624,6 +1716,7 @@ static Error GHDF_WriteScalarValue(BinaryIOStream* stream, GHDFObjectValue value
 static Error GHDF_ReadScalarValue(BinaryIOStream* stream,
     GHDFValueType valueType,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFObjectValue* outValue);
 
 static Error GHDF_WriteArray(BinaryIOStream* stream, GHDFArray* array);
@@ -1634,11 +1727,13 @@ static Error GHDF_WriteCompoundBody(BinaryIOStream* stream, const GHDFCompound* 
 // reject it before reading any of its contents when it exceeds GHDF_MAX_NESTING_DEPTH.
 static Error GHDF_ReadCompoundBody(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFCompound* compound,
     size_t depth);
 
 static Error GHDF_ReadArray(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFValueType elementType,
     size_t depth,
     GHDFArray** outArray);
@@ -1646,6 +1741,7 @@ static Error GHDF_ReadArray(BinaryIOStream* stream,
 static Error GHDF_ReadScalarValue(BinaryIOStream* stream,
     GHDFValueType valueType,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFObjectValue* outValue)
 {
     if (outValue == NULL)
@@ -1691,7 +1787,7 @@ static Error GHDF_ReadScalarValue(BinaryIOStream* stream,
             return BinaryIOStream_ReadBoolean(stream, &outValue->Value.Boolean);
 
         case GHDFValueType_String:
-            return GHDF_ReadOwnedStringValue(stream, objectPool, &outValue->Value.String);
+            return GHDF_ReadOwnedStringValue(stream, objectPool, budget, &outValue->Value.String);
 
         case GHDFValueType_EncodedInteger:
             return BinaryIOStream_ReadEncodedInt64(stream, &outValue->Value.EncodedInteger);
@@ -1731,6 +1827,7 @@ static Error GHDF_WriteEntryValue(BinaryIOStream* stream,
 
 static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFCompoundEntryType entryType,
     size_t parentDepth,
     GHDFObjectValue* outValue)
@@ -1746,11 +1843,22 @@ static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
     outValue->Type = entryType.ValueType;
     if (entryType.IsArray)
     {
-        return GHDF_ReadArray(stream, objectPool, entryType.ValueType, parentDepth + 1U, &outValue->Value.Array);
+        return GHDF_ReadArray(stream,
+            objectPool,
+            budget,
+            entryType.ValueType,
+            parentDepth + 1U,
+            &outValue->Value.Array);
     }
     if (entryType.ValueType == GHDFValueType_Compound)
     {
         GHDFCompound* Compound = NULL;
+
+        Result = GHDFReadBudget_Charge(budget, GHDF_READ_COMPOUND_BYTES, 0U);
+        if (Result.Code != ErrorCode_Success)
+        {
+            return Result;
+        }
 
         Result = GHDFObjectPool_BorrowCompound(objectPool, &Compound);
         if (Result.Code != ErrorCode_Success)
@@ -1758,7 +1866,7 @@ static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
             return Result;
         }
 
-        Result = GHDF_ReadCompoundBody(stream, objectPool, Compound, parentDepth + 1U);
+        Result = GHDF_ReadCompoundBody(stream, objectPool, budget, Compound, parentDepth + 1U);
         if (Result.Code != ErrorCode_Success)
         {
             (void)GHDFObjectPool_ReturnCompound(objectPool, Compound, true);
@@ -1769,7 +1877,7 @@ static Error GHDF_ReadEntryValue(BinaryIOStream* stream,
         return Error_CreateSuccess();
     }
 
-    return GHDF_ReadScalarValue(stream, entryType.ValueType, objectPool, outValue);
+    return GHDF_ReadScalarValue(stream, entryType.ValueType, objectPool, budget, outValue);
 }
 
 static Error GHDF_WriteArray(BinaryIOStream* stream, GHDFArray* array)
@@ -1822,6 +1930,7 @@ static Error GHDF_WriteArray(BinaryIOStream* stream, GHDFArray* array)
 
 static Error GHDF_ReadArray(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFValueType elementType,
     size_t depth,
     GHDFArray** outArray)
@@ -1853,16 +1962,31 @@ static Error GHDF_ReadArray(BinaryIOStream* stream,
         return Result;
     }
 
+    Result = GHDFReadBudget_Charge(budget, GHDF_READ_ARRAY_BYTES, 0U);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
     Result = GHDFObjectPool_BorrowArray(objectPool, elementType, &Array);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
     }
 
+    // Each element is charged as it is read: the declared count is only a claim.
     for (size_t Index = 0U; Index < ElementCount; Index++)
     {
         GHDFObjectValue Value;
 
+        Result = GHDFReadBudget_Charge(budget,
+            GHDFArray_GetStorageElementSize(elementType),
+            (elementType == GHDFValueType_Compound) ? GHDF_READ_COMPOUND_BYTES : 0U);
+        if (Result.Code != ErrorCode_Success)
+        {
+            (void)GHDFObjectPool_ReturnArray(objectPool, Array, true);
+            return Result;
+        }
         if (elementType == GHDFValueType_Compound)
         {
             Value.Type = GHDFValueType_Compound;
@@ -1873,11 +1997,11 @@ static Error GHDF_ReadArray(BinaryIOStream* stream,
                 return Result;
             }
 
-            Result = GHDF_ReadCompoundBody(stream, objectPool, Value.Value.Compound, depth + 1U);
+            Result = GHDF_ReadCompoundBody(stream, objectPool, budget, Value.Value.Compound, depth + 1U);
         }
         else
         {
-            Result = GHDF_ReadScalarValue(stream, elementType, objectPool, &Value);
+            Result = GHDF_ReadScalarValue(stream, elementType, objectPool, budget, &Value);
         }
         if (Result.Code != ErrorCode_Success)
         {
@@ -1981,6 +2105,7 @@ static Error GHDF_WriteCompoundBody(BinaryIOStream* stream, const GHDFCompound* 
 
 static Error GHDF_ReadCompoundBody(BinaryIOStream* stream,
     GHDFObjectPool* objectPool,
+    GHDFReadBudget* budget,
     GHDFCompound* compound,
     size_t depth)
 {
@@ -2008,12 +2133,19 @@ static Error GHDF_ReadCompoundBody(BinaryIOStream* stream,
         return Result;
     }
 
+    // Each entry is charged as it is read: the declared count is only a claim.
     for (size_t Index = 0U; Index < EntryCount; Index++)
     {
         uint64_t EntryID = 0U;
         uint8_t TypeByte = 0U;
         GHDFCompoundEntryType EntryType;
         GHDFObjectValue Value;
+
+        Result = GHDFReadBudget_Charge(budget, GHDF_READ_ENTRY_BYTES, 0U);
+        if (Result.Code != ErrorCode_Success)
+        {
+            return Result;
+        }
 
         Result = BinaryIOStream_ReadEncodedUInt64(stream, &EntryID);
         if (Result.Code != ErrorCode_Success)
@@ -2037,7 +2169,7 @@ static Error GHDF_ReadCompoundBody(BinaryIOStream* stream,
             return Result;
         }
 
-        Result = GHDF_ReadEntryValue(stream, objectPool, EntryType, depth, &Value);
+        Result = GHDF_ReadEntryValue(stream, objectPool, budget, EntryType, depth, &Value);
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
@@ -2363,10 +2495,14 @@ Error GHDF_Write(const GHDFCompound* root, IOStream* stream)
     return Result;
 }
 
-Error GHDF_Read(IOStream* stream, GHDFObjectPool* objectPool, GHDFCompound** outRoot)
+static Error GHDF_ReadInternal(IOStream* stream,
+    GHDFObjectPool* objectPool,
+    const GHDFReadLimits* limits,
+    GHDFCompound** outRoot)
 {
     BinaryIOStream BinaryStream;
     GHDFCompound* Root = NULL;
+    GHDFReadBudget Budget;
     Error Result = Error_CreateSuccess();
 
     if (stream == NULL)
@@ -2383,6 +2519,9 @@ Error GHDF_Read(IOStream* stream, GHDFObjectPool* objectPool, GHDFCompound** out
     }
 
     *outRoot = NULL;
+    Budget.HasTreeByteLimit = (limits != NULL);
+    Budget.TreeByteLimit = (limits != NULL) ? limits->MaxTreeByteCount : 0U;
+    Budget.TreeBytesRemaining = Budget.TreeByteLimit;
     Result = BinaryIOStream_Construct2(&BinaryStream, stream, MachineEndianess_LittleEndian, false);
     if (Result.Code != ErrorCode_Success)
     {
@@ -2396,11 +2535,15 @@ Error GHDF_Read(IOStream* stream, GHDFObjectPool* objectPool, GHDFCompound** out
     }
     if (Result.Code == ErrorCode_Success)
     {
+        Result = GHDFReadBudget_Charge(&Budget, GHDF_READ_COMPOUND_BYTES, 0U);
+    }
+    if (Result.Code == ErrorCode_Success)
+    {
         Result = GHDFObjectPool_BorrowCompound(objectPool, &Root);
     }
     if (Result.Code == ErrorCode_Success)
     {
-        Result = GHDF_ReadCompoundBody(&BinaryStream, objectPool, Root, GHDF_ROOT_NESTING_DEPTH);
+        Result = GHDF_ReadCompoundBody(&BinaryStream, objectPool, &Budget, Root, GHDF_ROOT_NESTING_DEPTH);
     }
 
     Error CleanupResult = BinaryIOStream_Deconstruct(&BinaryStream);
@@ -2425,6 +2568,29 @@ Error GHDF_Read(IOStream* stream, GHDFObjectPool* objectPool, GHDFCompound** out
 
     *outRoot = Root;
     return Error_CreateSuccess();
+}
+
+Error GHDF_Read(IOStream* stream, GHDFObjectPool* objectPool, GHDFCompound** outRoot)
+{
+    return GHDF_ReadInternal(stream, objectPool, NULL, outRoot);
+}
+
+Error GHDF_ReadWithLimits(IOStream* stream,
+    GHDFObjectPool* objectPool,
+    const GHDFReadLimits* limits,
+    GHDFCompound** outRoot)
+{
+    if (limits == NULL)
+    {
+        return CreateNullArgumentError(u8"limits");
+    }
+    if (limits->MaxTreeByteCount == 0U)
+    {
+        return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+            u8"GHDF argument \"limits\" is out of range: MaxTreeByteCount must be greater than zero.");
+    }
+
+    return GHDF_ReadInternal(stream, objectPool, limits, outRoot);
 }
 
 Error GHDFCompound_Clear(GHDFCompound* self)

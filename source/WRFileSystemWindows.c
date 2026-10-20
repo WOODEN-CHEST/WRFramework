@@ -762,6 +762,52 @@ Error FileSystemPlatform_MoveEntry(const unsigned char* oldPath, const unsigned 
     return Error_CreateSuccess();
 }
 
+// MOVEFILE_REPLACE_EXISTING replaces the destination in one step; without MOVEFILE_COPY_ALLOWED a move to another
+// volume fails instead of becoming a copy that is not atomic. MOVEFILE_WRITE_THROUGH returns only once the move is on
+// disk. MoveFileExW also moves a directory to a missing path, so a directory source is refused first; a directory at
+// the destination makes MoveFileExW fail.
+Error FileSystemPlatform_ReplaceEntry(const unsigned char* sourcePath, const unsigned char* destinationPath)
+{
+    wchar_t* WideSourcePath = NULL;
+    wchar_t* WideDestinationPath = NULL;
+    Error Result = ConvertUtf8ToWide(sourcePath, &WideSourcePath);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = ConvertUtf8ToWide(destinationPath, &WideDestinationPath);
+    if (Result.Code != ErrorCode_Success)
+    {
+        Memory_Free(WideSourcePath);
+        return Result;
+    }
+
+    DWORD SourceAttributes = GetFileAttributesW(WideSourcePath);
+    if ((SourceAttributes == INVALID_FILE_ATTRIBUTES) || ((SourceAttributes & FILE_ATTRIBUTE_DIRECTORY) != 0U))
+    {
+        DWORD NativeError = (SourceAttributes == INVALID_FILE_ATTRIBUTES) ? GetLastError() : ERROR_ACCESS_DENIED;
+        Memory_Free(WideSourcePath);
+        Memory_Free(WideDestinationPath);
+        return CreateWin32Error((SourceAttributes == INVALID_FILE_ATTRIBUTES) ? u8"replace file system entry"
+                : u8"replace file system entry with the directory",
+            sourcePath,
+            NativeError);
+    }
+
+    if (!MoveFileExW(WideSourcePath, WideDestinationPath, MOVEFILE_REPLACE_EXISTING | MOVEFILE_WRITE_THROUGH))
+    {
+        DWORD NativeError = GetLastError();
+        Memory_Free(WideSourcePath);
+        Memory_Free(WideDestinationPath);
+        return CreateWin32Error(u8"replace file system entry", sourcePath, NativeError);
+    }
+
+    Memory_Free(WideSourcePath);
+    Memory_Free(WideDestinationPath);
+    return Error_CreateSuccess();
+}
+
 Error FileSystemPlatform_GetExecutablePath(GenericBuffer* outPath)
 {
     wchar_t* WidePath = NULL;

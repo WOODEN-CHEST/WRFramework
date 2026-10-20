@@ -942,6 +942,23 @@ Error FileSystem_MoveEntry(const unsigned char* oldPath, const unsigned char* ne
     return FileSystemPlatform_MoveEntry(oldPath, newPath);
 }
 
+Error FileSystem_ReplaceEntry(const unsigned char* sourcePath, const unsigned char* destinationPath)
+{
+    Error Result = ValidatePathArgument(sourcePath, u8"sourcePath");
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = ValidatePathArgument(destinationPath, u8"destinationPath");
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    return FileSystemPlatform_ReplaceEntry(sourcePath, destinationPath);
+}
+
 Error FileSystem_RenameEntry(const unsigned char* path, const unsigned char* newName)
 {
     GenericBuffer ParentPathBuffer;

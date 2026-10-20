@@ -4,6 +4,8 @@
 // Macros.
 #define LIST_SORT_ASCENDING (1)
 #define LIST_SORT_DESCENDING (-1)
+// Ranges up to this many elements are insertion sorted (fewer comparisons than partitioning them).
+#define LIST_SORT_INSERTION_LIMIT ((size_t)16)
 
 
 // Types.
@@ -201,6 +203,52 @@ static Error CompareElements(ListSortContext* context,
     return Error_CreateSuccess();
 }
 
+// Whether the element at indexA belongs after the one at indexB in the sort's order. Reads through pointers when the list
+// gives them, else through copies in the context's two buffers (which the next comparison or swap may overwrite).
+static Error IsAfterInList(ListSortContext* context, size_t indexA, size_t indexB, bool* outIsAfter)
+{
+    void* PointerA = NULL;
+    void* PointerB = NULL;
+    ComparisonResult CompareResult = ComparisonResult_AEqualsB;
+    Error Result = GetElementPointerOrCopy(context->List, indexA, &PointerA, context->ElementBufferA);
+
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = GetElementPointerOrCopy(context->List, indexB, &PointerB, context->ElementBufferB);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = CompareElements(context, indexA, PointerA, indexB, PointerB, &CompareResult);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    *outIsAfter = ShouldSwapForSort(CompareResult, context->Direction);
+    return Error_CreateSuccess();
+}
+
+// Swaps two elements when the first belongs after the second.
+static Error OrderPairInList(ListSortContext* context, size_t indexA, size_t indexB)
+{
+    bool IsAfter = false;
+    Error Result = IsAfterInList(context, indexA, indexB, &IsAfter);
+
+    if ((Result.Code != ErrorCode_Success) || !IsAfter)
+    {
+        return Result;
+    }
+
+    return SwapElements(context->List, indexA, indexB, context->ElementBufferA, context->ElementBufferB);
+}
+
+// Lomuto partition around the element at highIndex. The pivot is compared where it is (it stays at highIndex until the
+// final swap), never through a copy: the two scratch buffers are the swaps' temporaries.
 static Error PartitionList(ListSortContext* context,
     size_t lowIndex,
     size_t highIndex,
@@ -214,38 +262,16 @@ static Error PartitionList(ListSortContext* context,
         return CreateNullArgumentError(u8"outPivotIndex");
     }
 
-    Result = IList_GetElement(context->List, highIndex, context->ElementBufferB);
-    if (Result.Code != ErrorCode_Success)
-    {
-        return Result;
-    }
-
     for (size_t CurrentIndex = lowIndex; CurrentIndex < highIndex; CurrentIndex++)
     {
-        void* CurrentPointer = NULL;
-        ComparisonResult CompareResult = ComparisonResult_AEqualsB;
+        bool IsAfter = false;
 
-        Result = GetElementPointerOrCopy(context->List,
-            CurrentIndex,
-            &CurrentPointer,
-            context->ElementBufferA);
+        Result = IsAfterInList(context, CurrentIndex, highIndex, &IsAfter);
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
         }
-
-        Result = CompareElements(context,
-            CurrentIndex,
-            CurrentPointer,
-            highIndex,
-            context->ElementBufferB,
-            &CompareResult);
-        if (Result.Code != ErrorCode_Success)
-        {
-            return Result;
-        }
-
-        if (!ShouldSwapForSort(CompareResult, context->Direction))
+        if (!IsAfter)
         {
             Result = SwapElements(context->List,
                 PartitionIndex,
@@ -275,33 +301,98 @@ static Error PartitionList(ListSortContext* context,
     return Error_CreateSuccess();
 }
 
-static Error QuickSortList(ListSortContext* context, size_t lowIndex, size_t highIndex)
+static Error InsertionSortList(ListSortContext* context, size_t lowIndex, size_t highIndex)
 {
-    size_t PivotIndex = 0;
+    for (size_t Index = lowIndex + 1; Index <= highIndex; Index++)
+    {
+        for (size_t Position = Index; Position > lowIndex; Position--)
+        {
+            bool IsAfter = false;
+            Error Result = IsAfterInList(context, Position - 1, Position, &IsAfter);
+
+            if (Result.Code != ErrorCode_Success)
+            {
+                return Result;
+            }
+            if (!IsAfter)
+            {
+                break;
+            }
+
+            Result = SwapElements(context->List, Position - 1, Position, context->ElementBufferA, context->ElementBufferB);
+            if (Result.Code != ErrorCode_Success)
+            {
+                return Result;
+            }
+        }
+    }
+
+    return Error_CreateSuccess();
+}
+
+// Restores the heap order below the node at rootOffset of the heap stored in [lowIndex, lowIndex + count).
+static Error SiftDownList(ListSortContext* context, size_t lowIndex, size_t rootOffset, size_t count)
+{
+    size_t Root = rootOffset;
+
+    while (Root < (count / 2))
+    {
+        size_t Child = (2 * Root) + 1;
+        bool IsAfter = false;
+        Error Result = Error_CreateSuccess();
+
+        if ((Child + 1) < count)
+        {
+            Result = IsAfterInList(context, lowIndex + Child + 1, lowIndex + Child, &IsAfter);
+            if (Result.Code != ErrorCode_Success)
+            {
+                return Result;
+            }
+            if (IsAfter)
+            {
+                Child++;
+            }
+        }
+
+        Result = IsAfterInList(context, lowIndex + Child, lowIndex + Root, &IsAfter);
+        if ((Result.Code != ErrorCode_Success) || !IsAfter)
+        {
+            return Result;
+        }
+
+        Result = SwapElements(context->List, lowIndex + Root, lowIndex + Child, context->ElementBufferA,
+            context->ElementBufferB);
+        if (Result.Code != ErrorCode_Success)
+        {
+            return Result;
+        }
+        Root = Child;
+    }
+
+    return Error_CreateSuccess();
+}
+
+// The introsort's fallback: O(n log n) for any input, in place, with no recursion.
+static Error HeapSortList(ListSortContext* context, size_t lowIndex, size_t highIndex)
+{
+    size_t Count = (highIndex - lowIndex) + 1;
     Error Result = Error_CreateSuccess();
 
-    if (lowIndex >= highIndex)
+    for (size_t Root = Count / 2; Root > 0; Root--)
     {
-        return Error_CreateSuccess();
-    }
-
-    Result = PartitionList(context, lowIndex, highIndex, &PivotIndex);
-    if (Result.Code != ErrorCode_Success)
-    {
-        return Result;
-    }
-
-    if (PivotIndex > lowIndex)
-    {
-        Result = QuickSortList(context, lowIndex, PivotIndex - 1);
+        Result = SiftDownList(context, lowIndex, Root - 1, Count);
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
         }
     }
-    if (PivotIndex < highIndex)
+    for (size_t End = Count - 1; End > 0; End--)
     {
-        Result = QuickSortList(context, PivotIndex + 1, highIndex);
+        Result = SwapElements(context->List, lowIndex, lowIndex + End, context->ElementBufferA, context->ElementBufferB);
+        if (Result.Code == ErrorCode_Success)
+        {
+            Result = SiftDownList(context, lowIndex, 0, End);
+        }
         if (Result.Code != ErrorCode_Success)
         {
             return Result;
@@ -309,6 +400,102 @@ static Error QuickSortList(ListSortContext* context, size_t lowIndex, size_t hig
     }
 
     return Error_CreateSuccess();
+}
+
+// Orders the first, middle and last elements and moves the median of the three to the end, where the partition takes
+// its pivot.
+static Error MoveMedianToEndOfList(ListSortContext* context, size_t lowIndex, size_t highIndex)
+{
+    size_t MiddleIndex = lowIndex + ((highIndex - lowIndex) / 2);
+    Error Result = OrderPairInList(context, lowIndex, MiddleIndex);
+
+    if (Result.Code == ErrorCode_Success)
+    {
+        Result = OrderPairInList(context, MiddleIndex, highIndex);
+    }
+    if (Result.Code == ErrorCode_Success)
+    {
+        Result = OrderPairInList(context, lowIndex, MiddleIndex);
+    }
+    if (Result.Code == ErrorCode_Success)
+    {
+        Result = SwapElements(context->List, MiddleIndex, highIndex, context->ElementBufferA, context->ElementBufferB);
+    }
+
+    return Result;
+}
+
+// Introsort, as GenericBuffer's sort (WRMemory.c): a median-of-three quicksort that recurses only into the smaller part
+// (at most log2 n frames), heapsort once the depth limit is spent (O(n log n) for any input), insertion sort for small
+// ranges.
+static Error IntroSortList(ListSortContext* context, size_t lowIndex, size_t highIndex, size_t depthLimit)
+{
+    size_t PivotIndex = 0;
+    Error Result = Error_CreateSuccess();
+
+    while ((highIndex > lowIndex) && ((highIndex - lowIndex) >= LIST_SORT_INSERTION_LIMIT))
+    {
+        if (depthLimit == 0)
+        {
+            return HeapSortList(context, lowIndex, highIndex);
+        }
+
+        depthLimit--;
+        Result = MoveMedianToEndOfList(context, lowIndex, highIndex);
+        if (Result.Code == ErrorCode_Success)
+        {
+            Result = PartitionList(context, lowIndex, highIndex, &PivotIndex);
+        }
+        if (Result.Code != ErrorCode_Success)
+        {
+            return Result;
+        }
+
+        if ((PivotIndex - lowIndex) < (highIndex - PivotIndex))
+        {
+            if (PivotIndex > lowIndex)
+            {
+                Result = IntroSortList(context, lowIndex, PivotIndex - 1, depthLimit);
+                if (Result.Code != ErrorCode_Success)
+                {
+                    return Result;
+                }
+            }
+            lowIndex = PivotIndex + 1;
+        }
+        else
+        {
+            if (PivotIndex < highIndex)
+            {
+                Result = IntroSortList(context, PivotIndex + 1, highIndex, depthLimit);
+                if (Result.Code != ErrorCode_Success)
+                {
+                    return Result;
+                }
+            }
+            if (PivotIndex == lowIndex)
+            {
+                return Error_CreateSuccess();
+            }
+            highIndex = PivotIndex - 1;
+        }
+    }
+
+    return (highIndex > lowIndex) ? InsertionSortList(context, lowIndex, highIndex) : Error_CreateSuccess();
+}
+
+// Twice the base-2 logarithm of the count: how deep the introsort partitions before it falls back to heapsort.
+static size_t GetListSortDepthLimit(size_t count)
+{
+    size_t Limit = 0;
+
+    while (count > 1)
+    {
+        count /= 2;
+        Limit += 2;
+    }
+
+    return Limit;
 }
 
 static Error SortInternal(IList* self, IListComparator comparator, const UserData* userData, int direction, void* scratch)
@@ -348,7 +535,7 @@ static Error SortInternal(IList* self, IListComparator comparator, const UserDat
         .ElementBufferA = ScratchBuffer,
         .ElementBufferB = ScratchBuffer + ElementSize,
     };
-    Result = QuickSortList(&Context, 0, ElementCount - 1);
+    Result = IntroSortList(&Context, 0, ElementCount - 1, GetListSortDepthLimit(ElementCount));
     Memory_Free(OwnedScratch);
     return Result;
 }

@@ -535,6 +535,8 @@ static Error BinaryIOStream_ReadEncodedUnsigned(BinaryIOStream* self,
         Result = IOStream_ReadByte(self->_wrappedStream, &ByteValue);
         if (Result.Code != ErrorCode_Success)
         {
+            // The stream's own error (its message) is replaced by the truncation error, so it is released first.
+            Error_Deconstruct(&Result);
             return CreateTruncatedEncodedIntegerError(Index);
         }
 

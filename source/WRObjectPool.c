@@ -11,9 +11,11 @@ typedef struct ObjectPoolSectionStruct
     unsigned char* Objects;
     unsigned char* OccupancyBits;
     size_t* FreeSlotStack;
+    size_t Capacity;
     size_t InitializedCount;
     size_t OccupiedCount;
     size_t FreeSlotCount;
+    bool IsListedAvailable;
 } ObjectPoolSection;
 
 
@@ -86,21 +88,6 @@ static bool TryMultiplySizes(size_t left, size_t right, size_t* outProduct)
     return true;
 }
 
-static bool TryAddSizes(size_t left, size_t right, size_t* outSum)
-{
-    if (outSum == NULL)
-    {
-        return false;
-    }
-    if (left > (SIZE_MAX - right))
-    {
-        return false;
-    }
-
-    *outSum = left + right;
-    return true;
-}
-
 static size_t GetSectionCount(ObjectPool* self)
 {
     return self->_sections._count;
@@ -109,6 +96,38 @@ static size_t GetSectionCount(ObjectPool* self)
 static ObjectPoolSection* GetSection(ObjectPool* self, size_t index)
 {
     return GenericBuffer_GetPointerToElement(&self->_sections, index);
+}
+
+static size_t GetSectionIndexByAddressAt(ObjectPool* self, size_t position)
+{
+    return *(size_t*)GenericBuffer_GetPointerToElement(&self->_sectionsByAddress, position);
+}
+
+static size_t GetMaxSectionCapacity(ObjectPool* self)
+{
+    size_t MaxCapacity = OBJECT_POOL_MAX_SECTION_BYTES / self->_elementSize;
+
+    return (MaxCapacity < self->_sectionCapacity) ? self->_sectionCapacity : MaxCapacity;
+}
+
+static size_t GetNextSectionCapacity(ObjectPool* self)
+{
+    size_t SectionCount = GetSectionCount(self);
+    size_t MaxCapacity = GetMaxSectionCapacity(self);
+
+    if (SectionCount == 0)
+    {
+        return self->_sectionCapacity;
+    }
+
+    // Every section holds at most MaxCapacity objects, so the subtraction cannot wrap.
+    size_t PreviousCapacity = GetSection(self, SectionCount - 1)->Capacity;
+    if (PreviousCapacity > (MaxCapacity - PreviousCapacity))
+    {
+        return MaxCapacity;
+    }
+
+    return PreviousCapacity * 2U;
 }
 
 static size_t GetOccupancyByteCount(size_t sectionCapacity)
@@ -149,9 +168,66 @@ static void SetSlotOccupied(ObjectPoolSection* section, size_t slotIndex, bool i
     section->OccupancyBits[ByteIndex] &= (unsigned char)(~Mask);
 }
 
-static bool SectionHasAvailableObject(const ObjectPoolSection* section, size_t sectionCapacity)
+static bool SectionHasAvailableObject(const ObjectPoolSection* section)
 {
-    return ((section->FreeSlotCount > 0) || (section->InitializedCount < sectionCapacity));
+    return ((section->FreeSlotCount > 0) || (section->InitializedCount < section->Capacity));
+}
+
+// Room for every section is reserved when a section is added (AddSection), so listing one never grows the list.
+static void ListSectionAsAvailable(ObjectPool* self, size_t sectionIndex)
+{
+    ObjectPoolSection* Section = GetSection(self, sectionIndex);
+
+    if (Section->IsListedAvailable)
+    {
+        return;
+    }
+
+    GenericBuffer_AddLast(&self->_availableSections, &sectionIndex);
+    Section->IsListedAvailable = true;
+}
+
+static void RebuildAvailableSections(ObjectPool* self)
+{
+    GenericBuffer_Clear(&self->_availableSections);
+
+    // Listed from the last section down, so borrows start again at the first section.
+    for (size_t Offset = 0; Offset < GetSectionCount(self); Offset++)
+    {
+        size_t SectionIndex = GetSectionCount(self) - 1 - Offset;
+        ObjectPoolSection* Section = GetSection(self, SectionIndex);
+
+        Section->IsListedAvailable = false;
+        if (SectionHasAvailableObject(Section))
+        {
+            ListSectionAsAvailable(self, SectionIndex);
+        }
+    }
+}
+
+// The number of sections whose objects start at or below the address: where a section starting there is inserted
+// in _sectionsByAddress, and one past the only section that could hold an object there.
+static size_t CountSectionsStartingAtOrBelow(ObjectPool* self, uintptr_t address)
+{
+    size_t Low = 0;
+    size_t High = self->_sectionsByAddress._count;
+
+    while (Low < High)
+    {
+        size_t Middle = Low + ((High - Low) / 2U);
+        ObjectPoolSection* Section = GetSection(self, GetSectionIndexByAddressAt(self, Middle));
+
+        if ((uintptr_t)Section->Objects <= address)
+        {
+            Low = Middle + 1U;
+        }
+        else
+        {
+            High = Middle;
+        }
+    }
+
+    return Low;
 }
 
 static unsigned char* GetObjectAddress(ObjectPool* self, ObjectPoolSection* section, size_t slotIndex)
@@ -192,7 +268,7 @@ static Error DeconstructObjectIfNeeded(ObjectPool* self, void* object)
 
 static Error ResetSectionForReuse(ObjectPool* self, ObjectPoolSection* section)
 {
-    size_t OccupancyByteCount = GetOccupancyByteCount(self->_sectionCapacity);
+    size_t OccupancyByteCount = GetOccupancyByteCount(section->Capacity);
 
     for (size_t SlotIndex = 0; SlotIndex < section->InitializedCount; SlotIndex++)
     {
@@ -233,7 +309,7 @@ static void DeconstructSection(ObjectPoolSection* section)
     Memory_Zero(section, sizeof(*section));
 }
 
-static Error ConstructSection(ObjectPool* self, ObjectPoolSection* outSection)
+static Error ConstructSection(ObjectPool* self, size_t capacity, ObjectPoolSection* outSection)
 {
     size_t ObjectBytes = 0;
     size_t OccupancyByteCount = 0;
@@ -243,18 +319,19 @@ static Error ConstructSection(ObjectPool* self, ObjectPoolSection* outSection)
     {
         return CreateNullArgumentError(u8"outSection");
     }
-    if (!TryMultiplySizes(self->_sectionCapacity, self->_elementSize, &ObjectBytes))
+    if (!TryMultiplySizes(capacity, self->_elementSize, &ObjectBytes))
     {
         return CreatePoolTooLargeError();
     }
 
-    OccupancyByteCount = GetOccupancyByteCount(self->_sectionCapacity);
-    if (!TryMultiplySizes(self->_sectionCapacity, sizeof(size_t), &FreeStackBytes))
+    OccupancyByteCount = GetOccupancyByteCount(capacity);
+    if (!TryMultiplySizes(capacity, sizeof(size_t), &FreeStackBytes))
     {
         return CreatePoolTooLargeError();
     }
 
     Memory_Zero(outSection, sizeof(*outSection));
+    outSection->Capacity = capacity;
     outSection->Objects = Memory_Allocate(ObjectBytes);
     outSection->OccupancyBits = Memory_Allocate(OccupancyByteCount);
     outSection->FreeSlotStack = Memory_Allocate(FreeStackBytes);
@@ -263,72 +340,74 @@ static Error ConstructSection(ObjectPool* self, ObjectPoolSection* outSection)
     return Error_CreateSuccess();
 }
 
-static Error AppendSection(ObjectPool* self, ObjectPoolSection* section, size_t* outSectionIndex)
+static Error AddSection(ObjectPool* self, size_t* outSectionIndex)
 {
+    size_t SectionCount = GetSectionCount(self);
+    ObjectPoolSection NewSection;
+
     if (outSectionIndex == NULL)
     {
         return CreateNullArgumentError(u8"outSectionIndex");
     }
-    if (GetSectionCount(self) == SIZE_MAX)
-    {
-        return CreatePoolTooLargeError();
-    }
-    if (!GenericBuffer_AddLast(&self->_sections, section))
+    if (SectionCount == SIZE_MAX)
     {
         return CreatePoolTooLargeError();
     }
 
-    *outSectionIndex = GetSectionCount(self) - 1;
+    // Room for the new section in all three lists first, so nothing below fails half way and listing a section as
+    // available never has to grow its list.
+    if (!GenericBuffer_EnsureTotalCapacity(&self->_sections, SectionCount + 1U)
+        || !GenericBuffer_EnsureTotalCapacity(&self->_availableSections, SectionCount + 1U)
+        || !GenericBuffer_EnsureTotalCapacity(&self->_sectionsByAddress, SectionCount + 1U))
+    {
+        return CreatePoolTooLargeError();
+    }
+
+    Error Result = ConstructSection(self, GetNextSectionCapacity(self), &NewSection);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    size_t AddressPosition = CountSectionsStartingAtOrBelow(self, (uintptr_t)NewSection.Objects);
+    if (!GenericBuffer_Insert(&self->_sectionsByAddress, &SectionCount, AddressPosition))
+    {
+        DeconstructSection(&NewSection);
+        return CreatePoolTooLargeError();
+    }
+    if (!GenericBuffer_AddLast(&self->_sections, &NewSection))
+    {
+        GenericBuffer_RemoveAt(&self->_sectionsByAddress, AddressPosition);
+        DeconstructSection(&NewSection);
+        return CreatePoolTooLargeError();
+    }
+
+    *outSectionIndex = SectionCount;
     return Error_CreateSuccess();
 }
 
-static Error EnsureAvailableSection(ObjectPool* self, size_t* outSectionIndex)
+// Borrows take from the section listed last: it has a slot to hand out, or a new section is added and listed.
+static Error GetAvailableSection(ObjectPool* self, size_t* outSectionIndex)
 {
-    size_t SectionCount = GetSectionCount(self);
-
-    if (outSectionIndex == NULL)
+    if (self->_availableSections._count > 0)
     {
-        return CreateNullArgumentError(u8"outSectionIndex");
+        *outSectionIndex = *(size_t*)GenericBuffer_GetPointerToLast(&self->_availableSections);
+        return Error_CreateSuccess();
     }
 
-    if (SectionCount > 0)
-    {
-        size_t StartIndex = self->_nextSectionSearchIndex % SectionCount;
-
-        for (size_t Offset = 0; Offset < SectionCount; Offset++)
-        {
-            size_t SectionIndex = (StartIndex + Offset) % SectionCount;
-            ObjectPoolSection* Section = GetSection(self, SectionIndex);
-
-            if (SectionHasAvailableObject(Section, self->_sectionCapacity))
-            {
-                *outSectionIndex = SectionIndex;
-                return Error_CreateSuccess();
-            }
-        }
-    }
-
-    ObjectPoolSection NewSection;
-    Error Result = ConstructSection(self, &NewSection);
+    Error Result = AddSection(self, outSectionIndex);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
     }
 
-    Result = AppendSection(self, &NewSection, outSectionIndex);
-    if (Result.Code != ErrorCode_Success)
-    {
-        DeconstructSection(&NewSection);
-        return Result;
-    }
-
+    ListSectionAsAvailable(self, *outSectionIndex);
     return Error_CreateSuccess();
 }
 
 static Error TryFindSectionByObject(ObjectPool* self, void* object, size_t* outSectionIndex, size_t* outSlotIndex)
 {
     uintptr_t TargetAddress = (uintptr_t)object;
-    size_t SectionCount = GetSectionCount(self);
 
     if (outSectionIndex == NULL)
     {
@@ -339,39 +418,25 @@ static Error TryFindSectionByObject(ObjectPool* self, void* object, size_t* outS
         return CreateNullArgumentError(u8"outSlotIndex");
     }
 
-    for (size_t SectionIndex = 0; SectionIndex < SectionCount; SectionIndex++)
+    size_t Position = CountSectionsStartingAtOrBelow(self, TargetAddress);
+    if (Position == 0)
     {
-        ObjectPoolSection* Section = GetSection(self, SectionIndex);
-        uintptr_t SectionStart = (uintptr_t)Section->Objects;
-        size_t SectionObjectBytes = 0;
-
-        if (!TryMultiplySizes(self->_sectionCapacity, self->_elementSize, &SectionObjectBytes))
-        {
-            return CreatePoolTooLargeError();
-        }
-
-        uintptr_t SectionEnd = 0;
-        if (!TryAddSizes(SectionStart, SectionObjectBytes, &SectionEnd))
-        {
-            return CreatePoolTooLargeError();
-        }
-        if ((TargetAddress < SectionStart) || (TargetAddress >= SectionEnd))
-        {
-            continue;
-        }
-
-        size_t OffsetBytes = (size_t)(TargetAddress - SectionStart);
-        if ((OffsetBytes % self->_elementSize) != 0U)
-        {
-            return CreateInvalidObjectError();
-        }
-
-        *outSectionIndex = SectionIndex;
-        *outSlotIndex = OffsetBytes / self->_elementSize;
-        return Error_CreateSuccess();
+        return CreateInvalidObjectError();
     }
 
-    return CreateInvalidObjectError();
+    size_t SectionIndex = GetSectionIndexByAddressAt(self, Position - 1);
+    ObjectPoolSection* Section = GetSection(self, SectionIndex);
+    size_t OffsetBytes = (size_t)(TargetAddress - (uintptr_t)Section->Objects);
+
+    // A section's byte count was checked against overflow when it was made.
+    if ((OffsetBytes >= (Section->Capacity * self->_elementSize)) || ((OffsetBytes % self->_elementSize) != 0U))
+    {
+        return CreateInvalidObjectError();
+    }
+
+    *outSectionIndex = SectionIndex;
+    *outSlotIndex = OffsetBytes / self->_elementSize;
+    return Error_CreateSuccess();
 }
 
 
@@ -397,9 +462,10 @@ Error ObjectPool_Construct2(ObjectPool* self,
 
     Memory_Zero(self, sizeof(*self));
     GenericBuffer_AllocateVariable(&self->_sections, 0, sizeof(ObjectPoolSection));
+    GenericBuffer_AllocateVariable(&self->_availableSections, 0, sizeof(size_t));
+    GenericBuffer_AllocateVariable(&self->_sectionsByAddress, 0, sizeof(size_t));
     self->_elementSize = elementSize;
     self->_sectionCapacity = sectionCapacity;
-    self->_nextSectionSearchIndex = 0;
     self->_lifecycle = lifecycle;
     self->_userData = (userData != NULL) ? *userData : UserData_CreateEmpty();
     return Error_CreateSuccess();
@@ -446,6 +512,8 @@ Error ObjectPool_Deconstruct(ObjectPool* self)
     }
 
     Memory_Free(self->_sections._data);
+    Memory_Free(self->_availableSections._data);
+    Memory_Free(self->_sectionsByAddress._data);
     Memory_Zero(self, sizeof(*self));
     return FirstError;
 }
@@ -463,7 +531,7 @@ Error ObjectPool_GetNewObject(ObjectPool* self, void** outObject)
     }
 
     *outObject = NULL;
-    Result = EnsureAvailableSection(self, &SectionIndex);
+    Result = GetAvailableSection(self, &SectionIndex);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -488,7 +556,12 @@ Error ObjectPool_GetNewObject(ObjectPool* self, void** outObject)
 
     SetSlotOccupied(Section, SlotIndex, true);
     Section->OccupiedCount++;
-    self->_nextSectionSearchIndex = SectionIndex;
+    if (!SectionHasAvailableObject(Section))
+    {
+        // The section came from the end of the list.
+        GenericBuffer_RemoveLast(&self->_availableSections);
+        Section->IsListedAvailable = false;
+    }
     *outObject = GetObjectAddress(self, Section, SlotIndex);
     return Error_CreateSuccess();
 }
@@ -532,7 +605,7 @@ Error ObjectPool_DisposeObject(ObjectPool* self, void* object)
     Section->FreeSlotStack[Section->FreeSlotCount] = SlotIndex;
     Section->FreeSlotCount++;
     Section->OccupiedCount--;
-    self->_nextSectionSearchIndex = SectionIndex;
+    ListSectionAsAvailable(self, SectionIndex);
     return Error_CreateSuccess();
 }
 
@@ -550,10 +623,11 @@ Error ObjectPool_Clear(ObjectPool* self)
         Result = ResetSectionForReuse(self, GetSection(self, SectionIndex));
         if (Result.Code != ErrorCode_Success)
         {
-            return Result;
+            break;
         }
     }
 
-    self->_nextSectionSearchIndex = 0;
-    return Error_CreateSuccess();
+    // Also after a failed reset: the sections reset before it have slots to hand out again.
+    RebuildAvailableSections(self);
+    return Result;
 }

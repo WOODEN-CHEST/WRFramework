@@ -27,14 +27,28 @@ typedef struct JSONParserStruct
     size_t Length;
     size_t Index;
     size_t Depth;   // Open objects/arrays, including the one being parsed (never above JSON_MAX_NESTING_DEPTH).
+    bool HasTreeByteLimit;      // JSON_DeserializeWithLimits: the tree's estimated bytes are charged (JSONReadLimits).
+    size_t TreeByteLimit;
+    size_t TreeBytesRemaining;
 } JSONParser;
 
-typedef struct JSONCompoundEntryEnumeratorStruct
+// Which view of a compound an ordered enumerator yields.
+typedef enum JSONCompoundViewEnum
+{
+    JSONCompoundView_Entries,
+    JSONCompoundView_Keys,
+    JSONCompoundView_Values
+} JSONCompoundView;
+
+// Walks a compound's keys in insertion order (its _keyOrder), yielding its entries, its keys or its values.
+typedef struct JSONCompoundOrderedEnumeratorStruct
 {
     CollectionEnumerator Base;
-    CollectionEnumerator* _inner;
+    JSONCompound* _compound;
+    JSONCompoundView _view;
+    size_t _currentIndex;
     JSONCompoundEntry _currentEntry;
-} JSONCompoundEntryEnumerator;
+} JSONCompoundOrderedEnumerator;
 
 typedef struct JSONArrayIndexedEnumeratorStruct
 {
@@ -47,8 +61,11 @@ typedef struct JSONArrayIndexedEnumeratorStruct
 typedef struct JSONCompoundStruct
 {
     JSONObjectPool* _pool;
-    HashMap _elements;
+    HashMap _elements;          // Key (const unsigned char*, pool-owned) -> JSONObjectValue.
+    GenericBuffer _keyOrder;    // The same key pointers (const unsigned char*) as _elements, in insertion order.
     ICollection _entryCollection;
+    ICollection _keyCollection;
+    ICollection _valueCollection;
 } JSONCompound;
 
 typedef struct JSONArrayStruct
@@ -174,6 +191,14 @@ static Error CreateNestingDepthError(size_t index)
         u8"Invalid JSON at byte index %zu: nesting depth exceeds JSON_MAX_NESTING_DEPTH (%zu).",
         index,
         JSON_MAX_NESTING_DEPTH);
+}
+
+static Error CreateTreeByteLimitError(size_t index, size_t limit)
+{
+    return Error_Construct3(ErrorCode_InvalidJSON,
+        u8"Invalid JSON at byte index %zu: the parsed document would take more than %zu bytes (JSONReadLimits).",
+        index,
+        limit);
 }
 
 static Error CreateSerializeError(const unsigned char* message)
@@ -493,6 +518,7 @@ static Error JSONCompoundPool_ConstructObject(void* object, const UserData* user
         return Result;
     }
 
+    GenericBuffer_AllocateVariable(&Compound->_keyOrder, 0, sizeof(const unsigned char*));
     InitializeCompoundCollection(Compound);
     return Error_CreateSuccess();
 }
@@ -502,6 +528,7 @@ static Error JSONCompoundPool_DeconstructObject(void* object, const UserData* us
     JSONCompound* Compound = object;
 
     UNUSED(userData);
+    Memory_Free(Compound->_keyOrder._data);
     return HashMap_Deconstruct(&Compound->_elements);
 }
 
@@ -756,12 +783,22 @@ static Error JSONCompound_SetOwnedKey(JSONCompound* self,
         return CreateSerializeError(u8"could not add a new JSON compound key");
     }
 
+    // A new key goes last in the order; the map and the order always hold the same keys.
+    if (!GenericBuffer_AddLast(&self->_keyOrder, &LookupKey))
+    {
+        bool WasRemoved = false;
+        Error RemoveResult = IMap_Remove(HashMap_AsMap(&self->_elements), &LookupKey, &WasRemoved);
+
+        Error_Deconstruct(&RemoveResult);
+        return Error_Construct1(ErrorCode_BufferTooLarge, u8"A JSON compound cannot hold more keys.");
+    }
+
     return Error_CreateSuccess();
 }
 
-static Error JSONCompoundEntryEnumerator_HasNext(void* self, bool* outHasNext)
+static Error JSONCompoundOrderedEnumerator_HasNext(void* self, bool* outHasNext)
 {
-    JSONCompoundEntryEnumerator* EnumeratorSelf = self;
+    JSONCompoundOrderedEnumerator* EnumeratorSelf = self;
 
     if (EnumeratorSelf == NULL)
     {
@@ -772,42 +809,80 @@ static Error JSONCompoundEntryEnumerator_HasNext(void* self, bool* outHasNext)
         return CreateNullArgumentError(u8"outHasNext");
     }
 
-    return CollectionEnumerator_HasNext(EnumeratorSelf->_inner, outHasNext);
+    *outHasNext = EnumeratorSelf->_currentIndex < EnumeratorSelf->_compound->_keyOrder._count;
+    return Error_CreateSuccess();
 }
 
-static Error JSONCompoundEntryEnumerator_NextByValue(void* self, void* outEntryValue)
+// Moves to the next key in insertion order and fills _currentEntry with it and its value.
+static Error JSONCompoundOrderedEnumerator_Advance(JSONCompoundOrderedEnumerator* self)
 {
-    JSONCompoundEntryEnumerator* EnumeratorSelf = self;
-    MapEntryView EntryView;
-    JSONCompoundEntry* Entry = outEntryValue;
+    JSONCompound* Compound = self->_compound;
+    JSONObjectValue Value;
+
+    if (self->_currentIndex >= Compound->_keyOrder._count)
+    {
+        return Error_Construct1(ErrorCode_IndexOutOfBounds, u8"The JSON compound enumerator has no more entries.");
+    }
+
+    const unsigned char* Key = *(const unsigned char**)GenericBuffer_GetPointerToElement(&Compound->_keyOrder,
+        self->_currentIndex);
+    Error Result = IMap_GetElement(HashMap_AsMap(&Compound->_elements), &Key, &Value);
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    self->_currentEntry.Key = Key;
+    self->_currentEntry.Value = Value;
+    self->_currentIndex++;
+    return Error_CreateSuccess();
+}
+
+// The current element of the enumerator's view: an entry, a key (the key pointer) or a value.
+static void* JSONCompoundOrderedEnumerator_GetCurrent(JSONCompoundOrderedEnumerator* self)
+{
+    switch (self->_view)
+    {
+        case JSONCompoundView_Keys:
+            return &self->_currentEntry.Key;
+        case JSONCompoundView_Values:
+            return &self->_currentEntry.Value;
+        case JSONCompoundView_Entries:
+            return &self->_currentEntry;
+    }
+
+    return &self->_currentEntry;
+}
+
+static Error JSONCompoundOrderedEnumerator_NextByValue(void* self, void* outEntryValue)
+{
+    JSONCompoundOrderedEnumerator* EnumeratorSelf = self;
     Error Result = Error_CreateSuccess();
 
     if (EnumeratorSelf == NULL)
     {
         return CreateNullArgumentError(u8"self");
     }
-    if (Entry == NULL)
+    if (outEntryValue == NULL)
     {
         return CreateNullArgumentError(u8"outEntryValue");
     }
 
-    Result = CollectionEnumerator_NextByValue(EnumeratorSelf->_inner, &EntryView);
+    Result = JSONCompoundOrderedEnumerator_Advance(EnumeratorSelf);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
     }
 
-    Entry->Key = *(const unsigned char**)EntryView._key;
-    Entry->Value = *(JSONObjectValue*)EntryView._value;
-    EnumeratorSelf->_currentEntry = *Entry;
+    Memory_Copy(JSONCompoundOrderedEnumerator_GetCurrent(EnumeratorSelf),
+        outEntryValue,
+        EnumeratorSelf->Base._singleElementSize);
     return Error_CreateSuccess();
 }
 
-static Error JSONCompoundEntryEnumerator_NextByReference(void* self, void** outPointer)
+static Error JSONCompoundOrderedEnumerator_NextByReference(void* self, void** outPointer)
 {
-    JSONCompoundEntryEnumerator* EnumeratorSelf = self;
-    void* InnerPointer = NULL;
-    MapEntryView* EntryView = NULL;
+    JSONCompoundOrderedEnumerator* EnumeratorSelf = self;
     Error Result = Error_CreateSuccess();
 
     if (EnumeratorSelf == NULL)
@@ -819,66 +894,80 @@ static Error JSONCompoundEntryEnumerator_NextByReference(void* self, void** outP
         return CreateNullArgumentError(u8"outPointer");
     }
 
-    Result = CollectionEnumerator_NextByReference(EnumeratorSelf->_inner, &InnerPointer);
+    Result = JSONCompoundOrderedEnumerator_Advance(EnumeratorSelf);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
     }
 
-    EntryView = InnerPointer;
-    EnumeratorSelf->_currentEntry.Key = *(const unsigned char**)EntryView->_key;
-    EnumeratorSelf->_currentEntry.Value = *(JSONObjectValue*)EntryView->_value;
-    *outPointer = &EnumeratorSelf->_currentEntry;
+    *outPointer = JSONCompoundOrderedEnumerator_GetCurrent(EnumeratorSelf);
     return Error_CreateSuccess();
 }
 
-static void JSONCompoundEntryEnumerator_Deconstruct(void* self)
+static void JSONCompoundOrderedEnumerator_Deconstruct(void* self)
 {
-    JSONCompoundEntryEnumerator* EnumeratorSelf = self;
-
-    if (EnumeratorSelf == NULL)
-    {
-        return;
-    }
-
-    if (EnumeratorSelf->_inner != NULL)
-    {
-        // The outer enumerator is caller-owned, but it owns its inner enumerator (cold path).
-        CollectionEnumerator_Destroy(EnumeratorSelf->_inner);
-    }
+    // The enumerator buffer is caller-owned; there are no internal resources to release.
+    (void)self;
 }
 
-static size_t JSONCompound_GetEntryEnumeratorSize(void* self)
+static size_t JSONCompound_GetOrderedEnumeratorSize(void* self)
 {
     (void)self;
-    return sizeof(JSONCompoundEntryEnumerator);
+    return sizeof(JSONCompoundOrderedEnumerator);
 }
 
-static CollectionEnumerator* JSONCompound_InitEntryEnumerator(void* self, void* buffer)
+static CollectionEnumerator* JSONCompound_InitOrderedEnumerator(JSONCompound* compound,
+    void* buffer,
+    JSONCompoundView view)
 {
     static const CollectionEnumeratorVTable EnumeratorTemplate =
     {
         .Self = NULL,
-        ._hasNext = JSONCompoundEntryEnumerator_HasNext,
-        ._nextByValue = JSONCompoundEntryEnumerator_NextByValue,
-        ._nextByReference = JSONCompoundEntryEnumerator_NextByReference,
-        ._deconstruct = JSONCompoundEntryEnumerator_Deconstruct,
+        ._hasNext = JSONCompoundOrderedEnumerator_HasNext,
+        ._nextByValue = JSONCompoundOrderedEnumerator_NextByValue,
+        ._nextByReference = JSONCompoundOrderedEnumerator_NextByReference,
+        ._deconstruct = JSONCompoundOrderedEnumerator_Deconstruct,
     };
-    JSONCompound* CompoundSelf = self;
-    JSONCompoundEntryEnumerator* Enumerator = buffer;
+    JSONCompoundOrderedEnumerator* Enumerator = buffer;
+    size_t ElementSize = sizeof(JSONCompoundEntry);
 
-    if ((CompoundSelf == NULL) || (Enumerator == NULL))
+    if ((compound == NULL) || (Enumerator == NULL))
     {
         return NULL;
     }
+    if (view == JSONCompoundView_Keys)
+    {
+        ElementSize = sizeof(const unsigned char*);
+    }
+    else if (view == JSONCompoundView_Values)
+    {
+        ElementSize = sizeof(JSONObjectValue);
+    }
 
-    Enumerator->_inner = ICollection_CreateEnumerator(IMap_AsEntryCollection(HashMap_AsMap(&CompoundSelf->_elements)));
-    Enumerator->Base._singleElementSize = sizeof(JSONCompoundEntry);
+    Enumerator->Base._singleElementSize = ElementSize;
     Enumerator->Base._flags = EnumeratorFlags_CanReturnByReference;
     Enumerator->Base._vtable = EnumeratorTemplate;
     Enumerator->Base._vtable.Self = Enumerator;
+    Enumerator->_compound = compound;
+    Enumerator->_view = view;
+    Enumerator->_currentIndex = 0;
     Enumerator->_currentEntry = (JSONCompoundEntry){ .Key = NULL, .Value = { .Type = JSONValueType_None } };
     return &Enumerator->Base;
+}
+
+static CollectionEnumerator* JSONCompound_InitEntryEnumerator(void* self, void* buffer)
+{
+    return JSONCompound_InitOrderedEnumerator(self, buffer, JSONCompoundView_Entries);
+}
+
+static CollectionEnumerator* JSONCompound_InitKeyEnumerator(void* self, void* buffer)
+{
+    return JSONCompound_InitOrderedEnumerator(self, buffer, JSONCompoundView_Keys);
+}
+
+static CollectionEnumerator* JSONCompound_InitValueEnumerator(void* self, void* buffer)
+{
+    return JSONCompound_InitOrderedEnumerator(self, buffer, JSONCompoundView_Values);
 }
 
 static Error JSONArrayIndexedEnumerator_HasNext(void* self, bool* outHasNext)
@@ -995,17 +1084,34 @@ static CollectionEnumerator* JSONArray_InitIndexedEnumerator(void* self, void* b
     return &Enumerator->Base;
 }
 
+// The entry, key and value views all walk the keys in insertion order.
 static void InitializeCompoundCollection(JSONCompound* self)
 {
     static const ICollectionVtable EntryCollectionTemplate =
     {
         .Self = NULL,
-        ._getEnumeratorSize = JSONCompound_GetEntryEnumeratorSize,
+        ._getEnumeratorSize = JSONCompound_GetOrderedEnumeratorSize,
         ._initEnumerator = JSONCompound_InitEntryEnumerator,
+    };
+    static const ICollectionVtable KeyCollectionTemplate =
+    {
+        .Self = NULL,
+        ._getEnumeratorSize = JSONCompound_GetOrderedEnumeratorSize,
+        ._initEnumerator = JSONCompound_InitKeyEnumerator,
+    };
+    static const ICollectionVtable ValueCollectionTemplate =
+    {
+        .Self = NULL,
+        ._getEnumeratorSize = JSONCompound_GetOrderedEnumeratorSize,
+        ._initEnumerator = JSONCompound_InitValueEnumerator,
     };
 
     self->_entryCollection._vtable = EntryCollectionTemplate;
     self->_entryCollection._vtable.Self = self;
+    self->_keyCollection._vtable = KeyCollectionTemplate;
+    self->_keyCollection._vtable.Self = self;
+    self->_valueCollection._vtable = ValueCollectionTemplate;
+    self->_valueCollection._vtable.Self = self;
 }
 
 static void InitializeArrayCollection(JSONArray* self)
@@ -1130,6 +1236,22 @@ static Error JSONParser_AppendCodePoint(GenericBuffer* destination, CodePoint co
 
     ByteCount = CharUTF8_WriteCodePoint(Buffer, codePoint);
     return AppendBytes(destination, Buffer, ByteCount, u8"append parsed string codepoint");
+}
+
+// Charges the estimated bytes of a value about to be built (byteCount plus extraByteCount) against the read limits.
+static Error JSONParser_ChargeTreeBytes(JSONParser* self, size_t byteCount, size_t extraByteCount)
+{
+    if (!self->HasTreeByteLimit)
+    {
+        return Error_CreateSuccess();
+    }
+    if ((byteCount > self->TreeBytesRemaining) || (extraByteCount > (self->TreeBytesRemaining - byteCount)))
+    {
+        return CreateTreeByteLimitError(self->Index, self->TreeByteLimit);
+    }
+
+    self->TreeBytesRemaining -= byteCount + extraByteCount;
+    return Error_CreateSuccess();
 }
 
 static Error JSONParser_ParseString(JSONParser* self, GenericBuffer** outStringBuffer)
@@ -1438,8 +1560,14 @@ static Error JSONParser_ParseValue(JSONParser* self, JSONObjectValue* outValue);
 static Error JSONParser_ParseObject(JSONParser* self, JSONObjectValue* outValue)
 {
     JSONCompound* Compound = NULL;
-    Error Result = JSONObjectPool_BorrowCompound(self->Pool, &Compound);
+    Error Result = JSONParser_ChargeTreeBytes(self, JSON_READ_COMPOUND_BYTES, 0);
 
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = JSONObjectPool_BorrowCompound(self->Pool, &Compound);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -1469,6 +1597,14 @@ static Error JSONParser_ParseObject(JSONParser* self, JSONObjectValue* outValue)
         Result = JSONParser_ParseString(self, &KeyBuffer);
         if (Result.Code != ErrorCode_Success)
         {
+            JSONObjectPool_ReturnCompound(self->Pool, Compound, true);
+            return Result;
+        }
+
+        Result = JSONParser_ChargeTreeBytes(self, JSON_READ_ENTRY_BYTES, KeyBuffer->_count);
+        if (Result.Code != ErrorCode_Success)
+        {
+            JSONObjectPool_ReturnString(self->Pool, KeyBuffer);
             JSONObjectPool_ReturnCompound(self->Pool, Compound, true);
             return Result;
         }
@@ -1532,8 +1668,14 @@ static Error JSONParser_ParseObject(JSONParser* self, JSONObjectValue* outValue)
 static Error JSONParser_ParseArray(JSONParser* self, JSONObjectValue* outValue)
 {
     JSONArray* Array = NULL;
-    Error Result = JSONObjectPool_BorrowArray(self->Pool, &Array);
+    Error Result = JSONParser_ChargeTreeBytes(self, JSON_READ_ARRAY_BYTES, 0);
 
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    Result = JSONObjectPool_BorrowArray(self->Pool, &Array);
     if (Result.Code != ErrorCode_Success)
     {
         return Result;
@@ -1559,7 +1701,11 @@ static Error JSONParser_ParseArray(JSONParser* self, JSONObjectValue* outValue)
         JSONObjectValue ElementValue;
 
         JSONParser_SkipWhitespace(self);
-        Result = JSONParser_ParseValue(self, &ElementValue);
+        Result = JSONParser_ChargeTreeBytes(self, sizeof(JSONObjectValue), 0);
+        if (Result.Code == ErrorCode_Success)
+        {
+            Result = JSONParser_ParseValue(self, &ElementValue);
+        }
         if (Result.Code != ErrorCode_Success)
         {
             JSONObjectPool_ReturnArray(self->Pool, Array, true);
@@ -1655,6 +1801,16 @@ static Error JSONParser_ParseValue(JSONParser* self, JSONObjectValue* outValue)
             Result = JSONParser_ParseString(self, &StringBuffer);
             if (Result.Code != ErrorCode_Success)
             {
+                return Result;
+            }
+
+            // The buffer grew in powers of two while the string was read, so it holds up to twice its length.
+            Result = JSONParser_ChargeTreeBytes(self,
+                JSON_READ_STRING_BYTES,
+                (StringBuffer->_count > (SIZE_MAX / 2U)) ? SIZE_MAX : (StringBuffer->_count * 2U));
+            if (Result.Code != ErrorCode_Success)
+            {
+                JSONObjectPool_ReturnString(self->Pool, StringBuffer);
                 return Result;
             }
 
@@ -1943,12 +2099,44 @@ static Error SerializeCompound(JSONCompound* value,
     return AppendByte(destination, JSON_BYTE_CLOSE_BRACE, u8"write object closing brace");
 }
 
+static bool IsScalarValueType(JSONValueType type)
+{
+    return (type == JSONValueType_String) || (type == JSONValueType_Boolean) || (type == JSONValueType_Integer)
+        || (type == JSONValueType_RealNumber) || (type == JSONValueType_Null);
+}
+
+// Whether every element of @p array is a scalar (no compound or array): JSONSerializeFlags_InlineScalarArrays keeps
+// such an array on one line.
+static bool HoldsOnlyScalars(JSONArray* array)
+{
+    size_t ElementCount = JSONArray_GetElementCount(array);
+
+    for (size_t Index = 0; Index < ElementCount; Index++)
+    {
+        JSONObjectValue Element;
+        Error Result = JSONArray_Get(array, Index, &Element);
+
+        if (Result.Code != ErrorCode_Success)
+        {
+            Error_Deconstruct(&Result);
+            return false;
+        }
+        if (!IsScalarValueType(Element.Type))
+        {
+            return false;
+        }
+    }
+
+    return true;
+}
+
 static Error SerializeArray(JSONArray* value,
     GenericBuffer* destination,
     JSONSerializeFlags flags,
     size_t depth)
 {
-    bool IsPretty = (flags & JSONSerializeFlags_PrettyPrinted) != 0;
+    bool IsMultiLine = (flags & JSONSerializeFlags_PrettyPrinted) != 0;
+    bool IsInline = false;
     size_t ElementCount = 0;
     Error Result = Error_CreateSuccess();
 
@@ -1968,7 +2156,11 @@ static Error SerializeArray(JSONArray* value,
     {
         return AppendByte(destination, JSON_BYTE_CLOSE_BRACKET, u8"write array closing bracket");
     }
-    if (IsPretty)
+
+    // A pretty array of scalars may stay on one line, its elements separated by ", ".
+    IsInline = IsMultiLine && ((flags & JSONSerializeFlags_InlineScalarArrays) != 0) && HoldsOnlyScalars(value);
+    IsMultiLine = IsMultiLine && !IsInline;
+    if (IsMultiLine)
     {
         Result = AppendByte(destination, JSON_BYTE_NEWLINE, u8"write array newline");
         if (Result.Code != ErrorCode_Success)
@@ -1986,7 +2178,7 @@ static Error SerializeArray(JSONArray* value,
         {
             return Result;
         }
-        if (IsPretty)
+        if (IsMultiLine)
         {
             Result = SerializeIndentation(destination, depth + 1);
             if (Result.Code != ErrorCode_Success)
@@ -2007,8 +2199,16 @@ static Error SerializeArray(JSONArray* value,
             {
                 return Result;
             }
+            if (IsInline)
+            {
+                Result = AppendByte(destination, JSON_BYTE_SPACE, u8"write array space");
+                if (Result.Code != ErrorCode_Success)
+                {
+                    return Result;
+                }
+            }
         }
-        if (IsPretty)
+        if (IsMultiLine)
         {
             Result = AppendByte(destination, JSON_BYTE_NEWLINE, u8"write array newline");
             if (Result.Code != ErrorCode_Success)
@@ -2018,7 +2218,7 @@ static Error SerializeArray(JSONArray* value,
         }
     }
 
-    if (IsPretty)
+    if (IsMultiLine)
     {
         Result = SerializeIndentation(destination, depth);
         if (Result.Code != ErrorCode_Success)
@@ -2125,7 +2325,10 @@ Error JSON_Serialize(JSONObjectValue* value, GenericBuffer* destination, JSONSer
     return Result;
 }
 
-Error JSON_Deserialize(JSONObjectPool* pool, GenericBuffer* source, JSONObjectValue* outValue)
+static Error JSON_DeserializeInternal(JSONObjectPool* pool,
+    GenericBuffer* source,
+    const JSONReadLimits* limits,
+    JSONObjectValue* outValue)
 {
     JSONParser Parser;
     Error Result = Error_CreateSuccess();
@@ -2149,6 +2352,9 @@ Error JSON_Deserialize(JSONObjectPool* pool, GenericBuffer* source, JSONObjectVa
     Parser.Length = source->_count;
     Parser.Index = 0;
     Parser.Depth = 0;
+    Parser.HasTreeByteLimit = (limits != NULL);
+    Parser.TreeByteLimit = (limits != NULL) ? limits->MaxTreeByteCount : 0;
+    Parser.TreeBytesRemaining = Parser.TreeByteLimit;
     *outValue = (JSONObjectValue){ .Type = JSONValueType_None };
 
     Result = JSONParser_ParseValue(&Parser, outValue);
@@ -2166,6 +2372,47 @@ Error JSON_Deserialize(JSONObjectPool* pool, GenericBuffer* source, JSONObjectVa
     }
 
     return Error_CreateSuccess();
+}
+
+Error JSON_Deserialize(JSONObjectPool* pool, GenericBuffer* source, JSONObjectValue* outValue)
+{
+    return JSON_DeserializeInternal(pool, source, NULL, outValue);
+}
+
+Error JSON_DeserializeWithLimits(JSONObjectPool* pool,
+    GenericBuffer* source,
+    const JSONReadLimits* limits,
+    JSONObjectValue* outValue)
+{
+    if (limits == NULL)
+    {
+        return CreateNullArgumentError(u8"limits");
+    }
+    if (limits->MaxTreeByteCount == 0)
+    {
+        return Error_Construct1(ErrorCode_ArgumentOutOfRange,
+            u8"JSON argument \"limits\" is out of range: MaxTreeByteCount must be greater than zero.");
+    }
+
+    return JSON_DeserializeInternal(pool, source, limits, outValue);
+}
+
+// Drops @p key from the compound's insertion order (after it left the map).
+static Error JSONCompound_RemoveFromKeyOrder(JSONCompound* self, const unsigned char* key)
+{
+    for (size_t Index = 0; Index < self->_keyOrder._count; Index++)
+    {
+        const unsigned char* OrderedKey = *(const unsigned char**)GenericBuffer_GetPointerToElement(&self->_keyOrder,
+            Index);
+
+        if (CStringEquals(OrderedKey, key))
+        {
+            GenericBuffer_RemoveAt(&self->_keyOrder, Index);
+            return Error_CreateSuccess();
+        }
+    }
+
+    return Error_Construct1(ErrorCode_InvalidState, u8"A JSON compound key was missing from the key order.");
 }
 
 Error JSONCompound_Set(JSONCompound* self, const unsigned char* key, JSONObjectValue* value)
@@ -2285,7 +2532,14 @@ Error JSONCompound_Clear(JSONCompound* self)
         return Result;
     }
 
-    return IMap_Clear(HashMap_AsMap(&self->_elements));
+    Result = IMap_Clear(HashMap_AsMap(&self->_elements));
+    if (Result.Code != ErrorCode_Success)
+    {
+        return Result;
+    }
+
+    GenericBuffer_Clear(&self->_keyOrder);
+    return Error_CreateSuccess();
 }
 
 Error JSONCompound_Remove(JSONCompound* self, const unsigned char* key)
@@ -2320,7 +2574,7 @@ Error JSONCompound_Remove(JSONCompound* self, const unsigned char* key)
         return CreateNotFoundError(u8"compound entry");
     }
 
-    return Error_CreateSuccess();
+    return JSONCompound_RemoveFromKeyOrder(self, key);
 }
 
 size_t JSONCompound_GetEntryCount(JSONCompound* self)
@@ -2350,7 +2604,7 @@ ICollection* JSONCompound_GetValueCollection(JSONCompound* self)
         return NULL;
     }
 
-    return IMap_AsValueCollection(HashMap_AsMap(&self->_elements));
+    return &self->_valueCollection;
 }
 
 ICollection* JSONCompound_GetKeyCollection(JSONCompound* self)
@@ -2360,7 +2614,7 @@ ICollection* JSONCompound_GetKeyCollection(JSONCompound* self)
         return NULL;
     }
 
-    return IMap_AsKeyCollection(HashMap_AsMap(&self->_elements));
+    return &self->_keyCollection;
 }
 
 Error JSONArray_Replace(JSONArray* self, size_t index, JSONObjectValue* value)

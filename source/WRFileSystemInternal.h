@@ -22,6 +22,9 @@ Error FileSystemPlatform_DeleteEntry(const unsigned char* path);
 
 Error FileSystemPlatform_MoveEntry(const unsigned char* oldPath, const unsigned char* newPath);
 
+// Moves a file over another atomically (FileSystem_ReplaceEntry): the destination is replaced in one step.
+Error FileSystemPlatform_ReplaceEntry(const unsigned char* sourcePath, const unsigned char* destinationPath);
+
 // Appends the absolute path of the running executable, as reported by the OS (UTF-8, null-terminated),
 // to outPath, which must be an empty growable byte buffer.
 Error FileSystemPlatform_GetExecutablePath(GenericBuffer* outPath);

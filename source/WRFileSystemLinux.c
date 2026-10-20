@@ -463,6 +463,31 @@ Error FileSystemPlatform_MoveEntry(const unsigned char* oldPath, const unsigned 
     return Error_CreateSuccess();
 }
 
+// rename() replaces an existing destination file atomically (POSIX), which is the whole contract. It would also move a
+// directory to a missing path or over an empty directory, so a directory source is refused first.
+Error FileSystemPlatform_ReplaceEntry(const unsigned char* sourcePath, const unsigned char* destinationPath)
+{
+    struct stat SourceData;
+
+    errno = 0;
+    if (lstat((const char*)sourcePath, &SourceData) != 0)
+    {
+        return CreateIOError(u8"replace file system entry", sourcePath, errno);
+    }
+    if (S_ISDIR(SourceData.st_mode))
+    {
+        return CreateIOError(u8"replace file system entry with the directory", sourcePath, EISDIR);
+    }
+
+    errno = 0;
+    if (rename((const char*)sourcePath, (const char*)destinationPath) != 0)
+    {
+        return CreateIOError(u8"replace file system entry", sourcePath, errno);
+    }
+
+    return Error_CreateSuccess();
+}
+
 Error FileSystemPlatform_GetExecutablePath(GenericBuffer* outPath)
 {
     size_t Capacity = FILE_SYSTEM_PLATFORM_TEMP_BUFFER_INITIAL_CAPACITY;
