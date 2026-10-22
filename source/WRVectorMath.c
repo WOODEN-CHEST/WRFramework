@@ -62,6 +62,27 @@ static double GetDeterminantFromMinors(const MatrixMinors* minors)
         + (minors->B03 * minors->B08) - (minors->B04 * minors->B07) + (minors->B05 * minors->B06);
 }
 
+/* The barycentric weights of a point from the dot products of a triangle's edges from its corner a (edge 0 to b, edge
+ * 1 to c) and the point's offset from a (Ericson's, as raymath's Vector3Barycenter): the same for 2D and 3D. */
+static bool TryGetBarycentricFromDots(double d00, double d01, double d11, double d20, double d21,
+    Vector3Double* outWeights)
+{
+    double Denominator = (d00 * d11) - (d01 * d01);
+    if ((Denominator == 0.0) || !IsFiniteValue(Denominator))
+    {
+        return false;
+    }
+    double V = ((d11 * d20) - (d01 * d21)) / Denominator;
+    double W = ((d00 * d21) - (d01 * d20)) / Denominator;
+    Vector3Double Weights = Vector3Double_Create(1.0 - (W + V), V, W);
+    if (!Vector3Double_IsFinite(Weights))
+    {
+        return false;
+    }
+    *outWeights = Weights;
+    return true;
+}
+
 /* Whether a box has its Min at most its Max on every axis: false for an inverted axis, and for a NaN bound, which
  * fails the comparisons. */
 static bool IsBoxOrdered(BoundingBoxDouble box)
@@ -70,7 +91,117 @@ static bool IsBoxOrdered(BoundingBoxDouble box)
 }
 
 
-// Public functions: vectors.
+// Public functions: 2D vectors.
+Vector2Double Vector2Double_NormalizeOr(Vector2Double self, Vector2Double fallback)
+{
+    double Largest = Math_MaxDouble(Math_AbsDouble(self.X), Math_AbsDouble(self.Y));
+    if (!Vector2Double_IsFinite(self) || !(Largest > 0.0))
+    {
+        return fallback;
+    }
+
+    // As in Vector3Double_NormalizeOr: divided by its larger component first, its length is between 1 and the square
+    // root of 2, so it neither underflows nor overflows.
+    Vector2Double Scaled = Vector2Double_Create(self.X / Largest, self.Y / Largest);
+    double Length = Vector2Double_Length(Scaled);
+    return Vector2Double_Create(Scaled.X / Length, Scaled.Y / Length);
+}
+
+Vector2Double Vector2Double_Project(Vector2Double self, Vector2Double onto)
+{
+    Vector2Double Unit = Vector2Double_NormalizeOr(onto, Vector2Double_Zero());
+    return Vector2Double_Scale(Unit, Vector2Double_Dot(self, Unit));
+}
+
+Vector2Double Vector2Double_Reject(Vector2Double self, Vector2Double onto)
+{
+    return Vector2Double_Subtract(self, Vector2Double_Project(self, onto));
+}
+
+Vector2Double Vector2Double_Refract(Vector2Double self, Vector2Double normal, double ratio)
+{
+    // raymath's Vector2Refract term for term (GLSL's refract).
+    double Cosine = Vector2Double_Dot(self, normal);
+    double Root = 1.0 - (ratio * ratio * (1.0 - (Cosine * Cosine)));
+    if (!(Root >= 0.0))
+    {
+        return Vector2Double_Zero();
+    }
+    double Along = (ratio * Cosine) + Math_SqrtDouble(Root);
+    return Vector2Double_Create((ratio * self.X) - (Along * normal.X), (ratio * self.Y) - (Along * normal.Y));
+}
+
+Vector2Double Vector2Double_Rotate(Vector2Double self, double angle)
+{
+    double Cosine = Math_CosDouble(angle);
+    double Sine = Math_SinDouble(angle);
+    return Vector2Double_Create((self.X * Cosine) - (self.Y * Sine), (self.X * Sine) + (self.Y * Cosine));
+}
+
+double Vector2Double_Angle(Vector2Double a, Vector2Double b)
+{
+    Vector2Double UnitA = Vector2Double_NormalizeOr(a, Vector2Double_Zero());
+    Vector2Double UnitB = Vector2Double_NormalizeOr(b, Vector2Double_Zero());
+    // Math_ATan2Double takes (x, y): the dot product is the x, the cross product the y.
+    return Math_ATan2Double(Vector2Double_Dot(UnitA, UnitB), Vector2Double_Cross(UnitA, UnitB));
+}
+
+Vector2Double Vector2Double_FromAngle(double angle)
+{
+    return Vector2Double_Create(Math_CosDouble(angle), Math_SinDouble(angle));
+}
+
+double Vector2Double_GetAngle(Vector2Double self)
+{
+    return Math_ATan2Double(self.X, self.Y);
+}
+
+Vector2Double Vector2Double_MoveTowards(Vector2Double self, Vector2Double target, double maxDistance)
+{
+    Vector2Double Offset = Vector2Double_Subtract(target, self);
+    double Distance = Vector2Double_Length(Offset);
+    if ((Distance == 0.0) || ((maxDistance >= 0.0) && (Distance <= maxDistance)))
+    {
+        return target;
+    }
+    return Vector2Double_AddScaled(self, Offset, maxDistance / Distance);
+}
+
+Vector2Double Vector2Double_ClampLength(Vector2Double self, double minimumLength, double maximumLength)
+{
+    double Length = Vector2Double_Length(self);
+    if (!(Length > 0.0))
+    {
+        return self;
+    }
+    if (Length < minimumLength)
+    {
+        return Vector2Double_Scale(self, minimumLength / Length);
+    }
+    if (Length > maximumLength)
+    {
+        return Vector2Double_Scale(self, maximumLength / Length);
+    }
+    return self;
+}
+
+bool Vector2Double_TryGetBarycentric(Vector2Double point, Vector2Double a, Vector2Double b, Vector2Double c,
+    Vector3Double* outWeights)
+{
+    // Ericson's, as raymath's Vector3Barycenter, from the corner a.
+    Vector2Double Edge0 = Vector2Double_Subtract(b, a);
+    Vector2Double Edge1 = Vector2Double_Subtract(c, a);
+    Vector2Double ToPoint = Vector2Double_Subtract(point, a);
+    double D00 = Vector2Double_Dot(Edge0, Edge0);
+    double D01 = Vector2Double_Dot(Edge0, Edge1);
+    double D11 = Vector2Double_Dot(Edge1, Edge1);
+    double D20 = Vector2Double_Dot(ToPoint, Edge0);
+    double D21 = Vector2Double_Dot(ToPoint, Edge1);
+    return TryGetBarycentricFromDots(D00, D01, D11, D20, D21, outWeights);
+}
+
+
+// Public functions: 3D vectors.
 Vector3Double Vector3Double_NormalizeOr(Vector3Double self, Vector3Double fallback)
 {
     double Largest = Math_MaxDouble(Math_AbsDouble(self.X), Math_MaxDouble(Math_AbsDouble(self.Y),
@@ -85,6 +216,108 @@ Vector3Double Vector3Double_NormalizeOr(Vector3Double self, Vector3Double fallba
     Vector3Double Scaled = Vector3Double_Create(self.X / Largest, self.Y / Largest, self.Z / Largest);
     double Length = Vector3Double_Length(Scaled);
     return Vector3Double_Create(Scaled.X / Length, Scaled.Y / Length, Scaled.Z / Length);
+}
+
+Vector3Double Vector3Double_Perpendicular(Vector3Double self)
+{
+    // raymath's choice: the axis with the smallest component, the first of equals.
+    double Least = Math_AbsDouble(self.X);
+    Vector3Double Axis = Vector3Double_Create(1.0, 0.0, 0.0);
+    if (Math_AbsDouble(self.Y) < Least)
+    {
+        Least = Math_AbsDouble(self.Y);
+        Axis = Vector3Double_Create(0.0, 1.0, 0.0);
+    }
+    if (Math_AbsDouble(self.Z) < Least)
+    {
+        Axis = Vector3Double_Create(0.0, 0.0, 1.0);
+    }
+    return Vector3Double_Cross(self, Axis);
+}
+
+Vector3Double Vector3Double_Project(Vector3Double self, Vector3Double onto)
+{
+    Vector3Double Unit = Vector3Double_NormalizeOr(onto, Vector3Double_Zero());
+    return Vector3Double_Scale(Unit, Vector3Double_Dot(self, Unit));
+}
+
+Vector3Double Vector3Double_Reject(Vector3Double self, Vector3Double onto)
+{
+    return Vector3Double_Subtract(self, Vector3Double_Project(self, onto));
+}
+
+Vector3Double Vector3Double_Refract(Vector3Double self, Vector3Double normal, double ratio)
+{
+    // raymath's Vector3Refract term for term (GLSL's refract).
+    double Cosine = Vector3Double_Dot(self, normal);
+    double Root = 1.0 - (ratio * ratio * (1.0 - (Cosine * Cosine)));
+    if (!(Root >= 0.0))
+    {
+        return Vector3Double_Zero();
+    }
+    double Along = (ratio * Cosine) + Math_SqrtDouble(Root);
+    return Vector3Double_Create((ratio * self.X) - (Along * normal.X), (ratio * self.Y) - (Along * normal.Y),
+        (ratio * self.Z) - (Along * normal.Z));
+}
+
+Vector3Double Vector3Double_RotateByAxisAngle(Vector3Double self, Vector3Double axis, double angle)
+{
+    // The Euler-Rodrigues formula, as raymath's: with w the unit axis times sin(angle / 2) and a = cos(angle / 2), the
+    // turned vector is v + 2a (w x v) + 2 (w x (w x v)).
+    double Half = angle * 0.5;
+    Vector3Double W = Vector3Double_Scale(Vector3Double_NormalizeOr(axis, Vector3Double_Zero()), Math_SinDouble(Half));
+    double A = Math_CosDouble(Half);
+    Vector3Double WCrossV = Vector3Double_Cross(W, self);
+    Vector3Double WCrossWCrossV = Vector3Double_Cross(W, WCrossV);
+    return Vector3Double_Add(Vector3Double_Add(self, Vector3Double_Scale(WCrossV, 2.0 * A)),
+        Vector3Double_Scale(WCrossWCrossV, 2.0));
+}
+
+double Vector3Double_Angle(Vector3Double a, Vector3Double b)
+{
+    Vector3Double UnitA = Vector3Double_NormalizeOr(a, Vector3Double_Zero());
+    Vector3Double UnitB = Vector3Double_NormalizeOr(b, Vector3Double_Zero());
+    // Math_ATan2Double takes (x, y): the dot product is the x, the cross product's length the y.
+    return Math_ATan2Double(Vector3Double_Dot(UnitA, UnitB), Vector3Double_Length(Vector3Double_Cross(UnitA, UnitB)));
+}
+
+Vector3Double Vector3Double_MoveTowards(Vector3Double self, Vector3Double target, double maxDistance)
+{
+    Vector3Double Offset = Vector3Double_Subtract(target, self);
+    double Distance = Vector3Double_Length(Offset);
+    if ((Distance == 0.0) || ((maxDistance >= 0.0) && (Distance <= maxDistance)))
+    {
+        return target;
+    }
+    return Vector3Double_AddScaled(self, Offset, maxDistance / Distance);
+}
+
+Vector3Double Vector3Double_ClampLength(Vector3Double self, double minimumLength, double maximumLength)
+{
+    double Length = Vector3Double_Length(self);
+    if (!(Length > 0.0))
+    {
+        return self;
+    }
+    if (Length < minimumLength)
+    {
+        return Vector3Double_Scale(self, minimumLength / Length);
+    }
+    if (Length > maximumLength)
+    {
+        return Vector3Double_Scale(self, maximumLength / Length);
+    }
+    return self;
+}
+
+bool Vector3Double_TryGetBarycentric(Vector3Double point, Vector3Double a, Vector3Double b, Vector3Double c,
+    Vector3Double* outWeights)
+{
+    Vector3Double Edge0 = Vector3Double_Subtract(b, a);
+    Vector3Double Edge1 = Vector3Double_Subtract(c, a);
+    Vector3Double ToPoint = Vector3Double_Subtract(point, a);
+    return TryGetBarycentricFromDots(Vector3Double_Dot(Edge0, Edge0), Vector3Double_Dot(Edge0, Edge1),
+        Vector3Double_Dot(Edge1, Edge1), Vector3Double_Dot(ToPoint, Edge0), Vector3Double_Dot(ToPoint, Edge1), outWeights);
 }
 
 
